@@ -1,0 +1,22 @@
+# Entornos
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Config local de agentes (NO se sube)
+AGENTS.md
+.opencode/
+
+# Checkpoints: solo v9b_net.pt se versiona
+models/*
+!models/v9b_net.pt
+
+# Artefactos de entrenamiento (viven en Drive/Colab, no en el repo)
+data/
+logs/
+notebooks/
+
+# Sistema
+.DS_Store
+Thumbs.db

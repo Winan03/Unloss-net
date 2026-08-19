@@ -1,0 +1,12 @@
+{
+  "config": {
+    "jpeg_quality": 40,
+    "max_dim": 512,
+    "subsampling": 2
+  },
+  "dataset_size": 60,
+  "worst_n": 10,
+  "vdr_otsu_worst": 0.8166666666666667,
+  "gap": 0.18333333333333335,
+  "plan_notebooks": 4
+}

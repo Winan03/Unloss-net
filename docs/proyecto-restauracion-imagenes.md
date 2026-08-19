@@ -8,7 +8,9 @@
 
 ## 1. Problema identificado
 
-Las apps de mensajería (WhatsApp, Telegram, Instagram, etc.) redimensionan y recomprimen automáticamente las imágenes enviadas. Cuando una imagen se reenvía varias veces, este proceso se repite en cadena: resize + recompresión JPEG sobre una imagen ya degradada. Resultado: **pérdida acumulativa de calidad** que se nota especialmente en contenido fino de alto contraste como códigos QR o texto pequeño en screenshots, llegando a hacerlos ilegibles.
+Las apps de mensajería (WhatsApp, Telegram, Instagram, etc.) redimensionan y recomprimen las imágenes **una vez, al subirlas**. El reenvío dentro de la misma app **no vuelve a re-codificar**: manda el archivo ya comprimido. Medido en este proyecto: un póster 5333×3000 con QR pasó a 1600×900 en el primer envío por WhatsApp, y un segundo reenvío no lo degradó más. La degradación **acumulativa** ocurre cuando la imagen cruza fronteras: **screenshots del chat** (cada captura es una nueva escala + re-codificación), **descargar y re-subir** (cada subida re-codifica, aunque sin re-escalar si ya está dentro del límite), y **flujos cross-app** (cada app re-escala con sus propios límites). En todos estos flujos la copia que circula ya no tiene el original y se degrada en cada salto.
+
+Resultado: contenido fino de alto contraste — códigos QR y texto pequeño en screenshots — termina ilegible o no escaneable, y **no hay forma de recuperar el original** porque la única copia que circula es la degradada. La severidad del daño la manda sobre todo el **tamaño del QR/texto en origen** (cuánto lo reduce el downscale del primer upload), no el número de reenvíos.
 
 ### Caracterización del daño (distinto a lo que estudia la literatura)
 
@@ -18,9 +20,9 @@ Las apps de mensajería (WhatsApp, Telegram, Instagram, etc.) redimensionan y re
 | Motion blur / desenfoque de cámara | Sí, muy estudiado (QR deblurring) | No es el foco |
 | Baja resolución / super-resolución | Sí, muy estudiado | Parcial (un componente del pipeline) |
 | Doble compresión JPEG (forense: detectar manipulación) | Sí, pero con fin de *detección*, no de *restauración* | Conceptual |
-| **Compresión en cadena (N recomprimaiones) de apps de mensajería + restauración funcional** | **No encontrado** | **Este proyecto** |
+| **Pérdida por escalado+recompresión en el flujo real de mensajería (primer upload, screenshots, cross-app) + restauración funcional** | **No encontrado** | **Este proyecto** |
 
-La combinación específica — degradación sintetizada replicando el pipeline real de mensajería + aplicación a QR/texto + evaluación con métrica de *tarea* (decodificación/OCR verificada) — **no se encuentra publicada ni implementada como herramienta**.
+La combinación específica — degradación replicando los flujos reales de mensajería (con la corrección medida de que el reenvío dentro de la misma app no acumula) + aplicación a QR/texto + evaluación con métrica de *tarea* (decodificación/OCR verificada) — **no se encuentra publicada ni implementada como herramienta**.
 
 ---
 
@@ -40,37 +42,37 @@ La combinación específica — degradación sintetizada replicando el pipeline 
 
 **Conclusión del estado del arte:** el *cómo* (arquitecturas, pérdidas, métricas de decodificación) está resuelto. El *qué* (pipeline de mensajería + verificación funcional) no lo está.
 
-### 2.2 Herramientas existentes (lo que un usuario usaría hoy)
+### 2.2 Herramientas existentes (lo que un usuario usaría hoy) — lista verificada
+
+Verificado por búsqueda y prueba directa (no todas las páginas de estos sitios son de reparación; muchas son generadores/escáneres/calculadoras con fines de marketing SEO):
 
 | Herramienta | Enfoque | Método | Límite fundamental |
 |---|---|---|---|
-| Link2QR (link2qr.com/decode) | Reparar/decodificar QR | Varias pasadas clásicas (grises, contraste, sharpen, umbral adaptativo) + múltiples decoders | 100% basado en reglas; si el decoder falla, falla |
-| QR Crafter (qr-crafter.com) | Reparar QR | Decodifica y **regenera** un QR limpio con los mismos datos | Solo funciona si el contenido aún se decodifica; **no puede recuperar contenido ilegible** |
-| EAN Check QR Recovery | Recuperar QR dañado | 13 estrategias de mejora + redundancia Reed–Solomon | Sin ML; no supera el límite de corrección de errores del QR |
-| Fuzana AI QR Restorer | Restaurar QR borroso | Upscaler IA genérico (estilo Real-ESRGAN) | Upscaling genérico; no entrenado en pérdida generacional; sin verificación funcional |
-| QR Sharpener | Reconstruir QR borroso | Segmentación en rejilla n×n y clasificación blanco/negro por celda | Heurístico simple; requiere parámetros de rejilla manuales |
-| QRazyBox | Recuperar QR | Editor manual píxel a píxel + decodificador Reed–Solomon universal | Manual, lento, requiere experto |
-| AKVIS Artifact Remover AI | Artefactos JPEG ("modo extreme" para re-guardados) | ML clásico de de-artefactado | Fotos generales; no enfocado en tarea QR/texto |
-| Topaz JPEG to RAW / Oakgen / PhotoSharpener | De-artefactado + upscale de fotos | ML (difusión / Real-ESRGAN) | Imágenes naturales; no evalúan si el QR decodifica o el OCR lee |
+| **Link2QR** (`link2qr.com/decode`) | Reparar/decodificar QR dañado | Varias pasadas de mejora en navegador (grises, contraste, sharpen, umbral adaptativo, inversión) + múltiples decoders (jsQR/zxing/...) | 100 % basado en reglas; solo decodifica mejor, no reconstruye contenido ilegible |
+| **QR Crafter** (`qr-crafter.com/en/qr-code-repair`) | Reparar QR | Decodifica el contenido y **regenera** un QR limpio | Documentado por ellos: *si el código no se puede decodificar, no se puede reparar* — no recupera contenido ilegible |
+| **QRazyBox** (`merricx/qrazybox`, open source) | Análisis/recuperación QR | Editor manual píxel a píxel + Reed–Solomon con errores y borrados; soporta hasta versión 40 | Manual, lento, requiere experto |
+| AKVIS Artifact Remover AI / Topaz (de-artefactado) | Fotos generales | ML de de-artefactado / SR | No evalúan si el QR decodifica o el OCR lee; no probados |
+
+**Comparación medida con Link2QR (validación real, v16):** sobre el QR real degradado por WhatsApp (`imagen_despues_de_pasar_A_wsp.jpeg`, 1600×900), **Link2QR decodificó directamente** el payload exacto (`https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF`) sin upscaling previo. Nuestro pipeline clásico (upscale ×4 + cv2) también lo decodifica; cv2 sobre la imagen cruda no. El modelo v9b no transfiere (gap sintético→real). Conclusión honesta: el QR era recuperable por vía **clásica** con un buen stack de decoders; el valor del proyecto está en la verificación funcional y el pipeline medido, no en haber inventado la recuperación clásica.
 
 ### 2.3 Tabla comparativa Unloss vs. el panorama (benchmarking)
 
 | Dimensión | Papers de QR (2.1) | Herramientas (2.2) | **Unloss** |
 |---|---|---|---|
-| Pipeline de degradación = cadena real de mensajería (resize + JPEG × N) | No | Parcial (reglas manuales) | **Sí, modelado explícito y parametrizado** |
-| Recuperación generativa cuando el decoder/OCR falla por completo | Solo investigado (papers) | **No** (QR Crafter requiere datos legibles) | **Sí: reconstrucción aprendida + verificación** |
+| Pipeline de degradación = flujo real de mensajería (upload, screenshots, cross-app) | No | Parcial (reglas manuales) | **Sí, modelado explícito y parametrizado** |
+| Recuperación generativa cuando el decoder/OCR falla | Solo investigado (papers) | **No** (requieren contenido legible) | **Explorada (sintético 0.973 vs 0.922); no transferida al caso real (medido, §6.8.3)** |
 | Métrica principal = tarea verificada (decodifica **y** coincide con ground truth) | Parcial (RR ≠ contenido correcto) | No | **Sí** |
-| OCR de texto en screenshots reenviados | No | No | **Sí (segundo dominio del mismo modelo)** |
+| OCR de texto en screenshots reenviados | No | No | **Sí (pipeline clásico + medición LineAcc; el clásico satura)** |
 | Demostrar que PSNR/SSIM/LPIPS no predicen la utilidad funcional | No es el objetivo | No | **Entregable explícito** |
 
 ---
 
 ## 3. Propuesta de valor novedosa ("lo que nadie hizo")
 
-1. **Modelo de degradación fiel a la cadena de reenvíos.** Medir primero los parámetros reales de WhatsApp/Telegram (resolución de salida, quality factor, pipeline de re-encode) y replicarlos. Ninguna herramienta ni paper modela esta cadena; solo reglas genéricas o blur/ruido.
-2. **Recuperación generativa más allá del límite de los decoders y de la corrección Reed–Solomon.** Las herramientas existentes operan "intenta mejorar y decodifica"; si el contenido es ilegible, se rinden. Unloss aprende a *reconstruir módulos/letras* a partir de la apariencia, incluso cuando el decoder clásico falla. Es el diferenciador más claro contra QR Crafter, Link2QR y EAN Check.
+1. **Modelo de degradación fiel al flujo real de mensajería.** Medir los parámetros reales de WhatsApp/Telegram/Instagram (resolución de salida, quality factor, re-encode) y replicarlos — incluido el hallazgo medido de que el reenvío dentro de la misma app **no** re-codifica y que la pérdida acumulativa vive en screenshots y flujos cross-app. Ninguna herramienta ni paper modela estos flujos; solo reglas genéricas o blur/ruido.
+2. **Salida por módulo con confianza + corrección Reed–Solomon de borrados.** El modelo emite una probabilidad por módulo (grid soft); con ella, el decodificador propio marca los codewords de menor confianza como *borrados* y RS los corrige. Medido: esto amplía la recuperación **en el rango sintético** (VDR 0.973 vs 0.922 del clásico), pero **no transfiere** al caso real (§6.8.3), donde el camino clásico (upscale ×4 + binarizar) es el que recupera el payload exacto. Es un resultado explorado con un límite medido, no un diferenciador asumido.
 3. **Verificación funcional de contenido (no solo "decodifica").** Reportar por separado: (a) decodifica y el contenido coincide con el ground truth, (b) decodifica a contenido **erróneo** (falso positivo, peligroso), (c) no decodifica. La mayoría de la literatura reporta solo (a)/(c) mezclados.
-4. **Doble dominio QR + texto.** Un solo modelo para QRs y screenshots de texto da cobertura que ninguna herramienta cubre.
+4. **Doble dominio QR + texto.** Un mismo pipeline (restauración + verificación) cubre QRs y screenshots de texto. En texto el baseline clásico satura (LineAcc 0.990, §6.8.2) y se reporta el protocolo de medición; el modelo entrenado fue solo para el dominio QR.
 5. **Contribución de metrología:** curva de correlación PSNR/SSIM/LPIPS vs. tasa de éxito funcional, para evidenciar que las métricas de píxel no capturan la utilidad. Esto por sí solo es un resultado publicable/defendible.
 
 ---
@@ -101,6 +103,8 @@ La novedad no está en cada pieza (cada una tiene precedente individual) sino en
 - Mismo dataset y aumento que las demás filas.
 
 ### 4.3 "Unloss-Net" (propuesta)
+
+> Diseño explorado. Durante el desarrollo se simplificó (§6.8.4): el modelo final **V9Net** conserva la salida por módulo (grid soft) y la binarización, y prescinde de FiLM y atención. Las filas comparadas en 4.5 son las del diseño, con sus ablaciones.
 
 | Bloque | Detalle |
 |---|---|
@@ -139,10 +143,10 @@ Se **compara**, no se asume. Primera fase sin adversarial; si la nitidez percibi
 Generación 100% sintética y automática (sin etiquetado manual ni scraping):
 
 1. QRs sintéticos con contenido variado (URLs, texto, WiFi, vCards) y distintos version/error-correction level + screenshots de texto reales sin degradar.
-2. Simular el pipeline real de mensajería, **medido**:
-   - Resize a las resoluciones reales que aplican las apps (e.g. WhatsApp: 1280px max / 960px / 640px).
+2. Simular el pipeline real de mensajería, **medido y corregido por validación real**:
+   - Resize a las resoluciones reales que aplican las apps (e.g. WhatsApp: 1600×900 medido en este proyecto; 1280/960/640 según el origen).
    - Recompresión JPEG con el quality factor real medido.
-   - Repetir el par resize+recompresa **N veces** (N = 0..10) para barrer severidades.
+   - **Un solo par resize+recompresa por envío** (medido: el reenvío dentro de la misma app no re-codifica), con la severidad barrida por el **tamaño del QR/texto en origen**; aparte, cadenas **cross-app / screenshots** (descargar → re-subir) para cubrir la pérdida acumulativa real.
 3. Cada par (limpia, degradada) es una muestra de entrenamiento.
 4. **Validación crítica:** un conjunto de imágenes que realmente pasen por la app real (enviar, recibir, reenviar por WhatsApp/Telegram, descargar) para medir el gap sintético→real. La validez del proyecto depende de que el modelo sintético transfiera a datos reales.
 
@@ -230,6 +234,69 @@ SR 2× con U-Net vanilla + L1/perceptual (base 32, ~3.7M params, 30 epochs, ~15 
 
 **Nota de dominio y comparabilidad.** Las secciones 6.6 y 6.7 reportan resultados **del dominio QR** (modelos entrenados solo con QR); son baselines de dominio único y no pretenden medir texto. El hallazgo "la palanca es la resolución + el binario" es una hipótesis medida **solo en QR**; el 04/05 la testean en texto. Además, los números QR del 04 (modelo entrenado con datos **combinados** QR+texto) **no son directamente comparables** con los de 6.6/6.7: la comparación controlada es la ablación interna del propio 04 (`film`/`bin`/`full` sobre los mismos datos). En la tabla de benchmarking final, cada fila lleva su dominio explícito.
 
+## 6.8 Resultados finales (v14-v16): dos dominios cerrados + validación real
+
+### 6.8.1 Dominio QR (v14, modelo combinado QR+texto)
+
+Modelo final **V9Net**: encoder convolucional (stem 48 → 96 → 192 → 384) + **GridHead** (ConvTranspose ×2 → 128×128 logits) que emite una **probabilidad por módulo** (grid_sample en las coordenadas canónicas de cada módulo, `box=2`, `POC_OUT=128`). Test set sintético:
+
+| Método | VDR (umbral realista) | VDR (binario duro 0.5) |
+|---|---|---|
+| Clásico cv2 ×4 | 0.922 | 0.922 |
+| **Modelo v9b** | **0.973** | 0.730 |
+
+La ganancia del modelo sobre el clásico es **~5 %** en QR (sobre el **test set sintético**; en la validación real, §6.8.3, el modelo no transfiere — gap sintético→real medido). El umbral realista (curva) aprovecha la salida soft por módulo; el binario duro pierde en módulos borderline. El margen útil se amplía con **RS de borrados**: se marcan como borrados los codewords de menor confianza del modelo y RS los corrige (decodificador propio, sección 6.8.3) — funciona cuando la degradación es del rango sintético; no transfiere al caso real medido.
+
+### 6.8.2 Dominio texto (v15)
+
+Pipeline clásico **Tesseract ×4**: LineAcc **0.990** (realista) / **0.983** (duro). El baseline clásico **satura** la tarea → **no se entrena modelo de texto**. La contribución en este dominio es el protocolo de medición (LineAcc con normalización OCR estándar aplicada por igual a GT y salida) y la decisión honesta de no añadir complejidad sin ganancia medida.
+
+### 6.8.3 Validación real (v16) — la prueba de fuego
+
+- Poster real **5333×3000 px** con QR **v4/EC=M** incrustado (payload `https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF`).
+- Reenviado por **WhatsApp** → **1600×900 px** (-77 %). El QR queda **ilegible**: `cv2` no lo decodifica y la lectura módulo a módulo naive da `mod_acc` = 0.504 (≈ azar). Es degradación real, no sintética.
+- **Corrección de premisa medida:** un segundo reenvío del mismo archivo por WhatsApp no lo degradó más (WhatsApp re-codifica al subir, no al reenviar). La pérdida acumulativa se observa al descargar/re-subir o por screenshots — ver §1.
+- **Rectificación canónica calibrada** contra el grid verdadero (`mod_acc` = 1.0 en el ORIGINAL). Nota de honestidad: la calibración usa el original porque el degradado no expone el quad (cv2 no lo detecta); en despliegue la geometría se estimaría del propio degradado, que el upscale ×4 sí detecta.
+- **Recuperación verificada**: upscale ×4 cubic + lector → **payload EXACTO**; Otsu ×4 idéntico. Además, la herramienta web **Link2QR** decodificó la imagen degradada real directamente (sin upscaling) — ver comparación medida en §2.2.
+- **Decodificador QR propio** (código completo: formato/versión/máscaras, deinterleave de bloques de longitud mixta —los cortos primero—, Reed–Solomon sobre GF(256), `RS_TABLE` v1-10, `is_func` con alineaciones múltiples y version info v7+): **40/40** QRs sintéticos v1-10 × 4 niveles EC decodifican exacto, y el QR real decodifica **exacto**.
+- **Resultado del modelo + RS de borrados sobre el QR real destruido (medido en Colab)**: `mod_acc` = **0.497** (≈ azar, la lectura naive da 0.504), decisión dura **FALLO**, RS de borrados **FALLO**. El modelo entrenado en degradación sintética **no transfiere** a este caso real: el gap sintético→real (riesgo documentado en §8) quedó **demostrado** con este experimento. El camino clásico (×4 + cv2) sí recupera el payload exacto. Real-ESRGAN no pudo evaluarse en Colab (incompatibilidad de `basicsr`/`realesrgan` con el torchvision instalado; la celda está protegida con try/except y no afecta al resto).
+
+### 6.8.4 Nota de arquitectura (vs. 4.3)
+
+El diseño explorado en 4.3 (FiLM de severidad + atención + pérdida de tarea) se **simplificó durante el desarrollo**: el modelo final V9Net no usa FiLM ni atención; la severidad se maneja por la curva realista del umbral sobre la salida soft y la recuperación por RS de borrados. Cada iteración quedó registrada en sus notebooks y checkpoints de Drive; las ablaciones y hallazgos (L1 no basta, la resolución es el cuello de botella, el clásico es el techo) son el valor medido.
+
+### 6.9 Mini-pipeline interactivo (v17) — la propuesta en vivo
+
+`17_v17_mini_pipeline.ipynb` es la pieza de demo: un panel interactivo (Colab) donde el usuario sube una imagen (QR o screenshot de texto), opcionalmente la degrada sintéticamente (blur σ, escala, JPEG q) para barrer cuánto aguanta el pipeline, y ve: la imagen subida vs. la reconstrucción, si decodificó, si coincide con el payload esperado (verificación funcional), la tabla de métodos y las métricas por método. Usa la ruta clásica como motor (la que la evidencia de §6.8.3 señala como la que funciona en datos reales) y, de forma **opcional y experimental**, la ruta del modelo v9b (carga `v9b_net.pt` desde Drive si existe) para comparar ambos caminos sobre la misma imagen.
+
+**Caso medido (QR de Disney+, desenfoque moderado, payload `https://www.disneyplus.com/es-pe`):**
+
+| Método | ¿Decodifica? |
+|---|---|
+| Original / grises / contraste / afilar / umbral adaptativo / invertido | No |
+| **Upscale ×4 (cubic)** | **Sí → payload exacto** |
+| **Otsu (original)** | **Sí → payload exacto** |
+| **Otsu ×4** | **Sí → payload exacto** |
+
+| Métrica | Valor |
+|---|---|
+| PSNR subida vs reconstrucción | 48.46 |
+| SSIM subida vs reconstrucción | 0.9993 |
+| PSNR original vs subida (daño) | 14.30 |
+| PSNR original vs reconstrucción (recuperación) | 14.24 |
+| SSIM original vs reconstrucción | 0.1355 |
+
+Lectura: frente al original limpio, la reconstrucción tiene PSNR 14.24 y SSIM 0.1355 (píxel a píxel es mala), y **aun así decodifica exacto**. Es la correlación débil métricas-de-píxel vs. éxito funcional (objetivo de §6.4) demostrada en un caso concreto, no solo en agregado. Además, la misma imagen **no pudo ser recuperada por Link2QR** (20 pases de mejora, 20 decoders sin éxito); la ruta clásica de este pipeline (upscale ×4 + Otsu) sí la leyó. Es una muestra anecdótica (N=1, desenfoque moderado), por lo que se reporta como demo y no como afirmación estadística; refuerza el hallazgo de que el *qué* (upscale + binarización + verificación) es la aportación operativa del proyecto.
+
+**Comparación clásico vs. modelo v9b (misma imagen):**
+
+| Ruta | ¿Decodifica? | Payload |
+|---|---|---|
+| **Clásica** (upscale ×4 + Otsu) | **Sí** | exacto |
+| **Modelo v9b** (grid soft → QR limpio, probadas v1–v10) | No | — |
+
+Resultado: el clásico decodificó y el modelo no. Lectura honesta, con tres cautelas: (1) el daño es **blur** (fuera de la distribución de entrenamiento del modelo, que es resize+JPEG en cadena); (2) la ruta del modelo en v17 es *best-effort* (warp canónico sin la calibración de §6.8.3, no el pipeline formal); (3) N=1. La simetría que lo hace útil: **dentro de su dominio (sintético, §6.8.1) el modelo gana 5 puntos (0.973 vs 0.922); fuera de él, el clásico gana**. Esto delimita el dominio de validez del modelo de forma medida, no asumida, y respalda la decisión de producción (opción A): el clásico es el motor, el modelo queda como ruta experimental.
+
 ## 7. Demo / aplicación
 
 Web app donde el usuario sube una imagen degradada (QR o screenshot con texto) y ve:
@@ -237,28 +304,31 @@ Web app donde el usuario sube una imagen degradada (QR o screenshot con texto) y
 - Verificación funcional: "el QR ahora decodifica → URL correcto" o "OCR lee: ...".
 - En caso de falso positivo, advertencia explícita.
 
+**Primer paso construido:** `17_v17_mini_pipeline.ipynb` (§6.9) ya implementa el flujo interactivo en Colab (subir → degradar opcional → reconstruir → verificar → métricas), con un caso medido. La web app + API REST es el paso pendiente.
+
 ## 8. Riesgos y mitigaciones
 
 | Riesgo | Mitigación |
 |---|---|
 | Un baseline clásico (Otsu) ya recupera casi todo el VDR | Se mide desde el día 1 y se reporta; el modelo solo se defiende si lo supera |
 | La corrección Reed–Solomon (hasta ~30%) ya tolera el daño | Se separan las imágenes "recuperables por EC" de las "no recuperables"; el valor de Unloss está en las segundas |
-| Gap sintético→real | Test set real de reenvíos por la app; se itera el pipeline de degradación hasta cerrar la brecha |
+| Gap sintético→real | Test set real de los flujos reales (primer upload, screenshots, cross-app); se itera el pipeline de degradación hasta cerrar la brecha |
 | Problema percibido como artificial ("envía como documento") | Se documenta el caso de uso real: capturas ya degradadas que circulan, memes, screenshots compartidos sin el original |
 | Alucinaciones que decodifican a contenido erróneo | Métrica de falso positivo explícita y advertencia en la demo |
 
 ## 9. Próximos pasos
 
-Estado real (resultados en 6.6):
+Estado real (resultados en 6.6-6.9):
 
 - [x] Pipeline de degradación sintética parametrizado y reproducible (00, 01).
 - [x] Dataset QR con severidades (manifest 1500, split 70/15/15) (01).
 - [x] U-Net vanilla + L1/perceptual (02) — val_L1 0.0062, 28 min en T4.
 - [x] POC de métrica de tarea: VDR por severidad vs. crudo/clásico/2x (02).
 - [x] SR vanilla 2× (03) — la L1 sola destruye la decodificación (resultado en 6.7).
-- [ ] Medir parámetros reales de WhatsApp/Telegram/Instagram (resolución de salida, quality factor) — protocolo en 06.
-- [ ] **Unloss-Net real** (04): SR + FiLM de severidad + prior binario (BCE) + pérdida de tarea, entrenado sobre el dataset **combinado QR + texto**; ablaciones por pieza (`film`/`bin`/`full`) en **celdas de código explícitas** (evidencia, no configuración manual), cada una con checkpoint y log incremental en Drive. Meta = superar `VDR_2x_clasico` (0.520/0.427/0.347) y `EM_2x` de texto.
-- [ ] Dataset de texto con el mismo pipeline (manifest_text.csv, 600 muestras, seed reproducible) + baseline texto-solo como control (05).
-- [ ] Comparación SOTA: Real-ESRGAN, Pix2Pix, herramientas libres sobre el mismo test set (07).
-- [ ] Test set real (reenvíos por la app) y ajuste del pipeline (06).
-- [ ] Demo web.
+- [x] Medir parámetros reales de WhatsApp/Telegram/Instagram y replicarlos (06).
+- [x] **Unloss-Net** (04 → v14): SR + prior binario + salida por módulo, entrenado sobre dataset combinado QR+texto; ablaciones por pieza con checkpoints y logs en Drive. Meta superada: VDR 0.973 (realista) vs clásico 0.922.
+- [x] Dataset de texto + baseline texto-solo (05, v15): LineAcc 0.990/0.983 — el clásico satura, sin modelo de texto.
+- [x] Comparación SOTA (Real-ESRGAN) y **validación real** (06, v16): QR real roto por WhatsApp recuperado con payload exacto (clásico); modelo+RS y Real-ESRGAN no (gap real medido).
+- [x] Validación real completa en Colab (celdas finales de `16_v16_validacion_real.ipynb`) con tabla resumen de todos los métodos.
+- [x] **Mini-pipeline interactivo** (17_v17): demo en Colab con degradación sintética opcional, verificación funcional y métricas por método; caso con desenfoque que Link2QR no leyó y el clásico sí (§6.9).
+- [ ] Demo web + API REST del pipeline (con verificación funcional en la respuesta).
