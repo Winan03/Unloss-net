@@ -148,6 +148,27 @@ Los experimentos se ejecutan en **Google Colab** con GPU (T4). El dataset es 100
 
 La **web app** (`app/`) expone el pipeline clásico como API REST (`/api/restore`) con verificación funcional en la respuesta, y la ruta experimental v9b desactivada por defecto. Corre en Render (free tier); el modelo no se instala en ese despliegue (sin GPU ni torch), se habilita solo en local con `models/v9b_net.pt`.
 
+## Web app: ejecutar y desplegar
+
+**Local (con venv):**
+
+```
+python -m venv --system-site-packages .venv
+.venv\Scripts\pip install -r requirements-dev.txt
+.venv\Scripts\python -m uvicorn app.main:app --reload
+# http://127.0.0.1:8000
+```
+
+Endpoint `POST /api/restore` (multipart): `image` (obligatorio), `expected` (opcional), `use_model` (opcional, `true` para intentar la ruta experimental v9b). Responde el estado funcional (`verified`/`decoded`/`false_positive`/`not_decoded`), la tabla de métodos, la reconstrucción como data URL y las métricas.
+
+**Tests:**
+
+```
+.venv\Scripts\python -m pytest
+```
+
+**Despliegue (Render, free tier):** conecta el repo y Render usará `render.yaml` (sin torch: la ruta v9b reporta "no disponible"). El free tier duerme tras ~15 min de inactividad; se mantiene despierto con un ping a `/health` cada 5 min (p. ej. cronjob.org o UptimeRobot). El primer request tras el cold start tarda ~50 s.
+
 ## Roadmap
 
 - [x] Pipeline de degradación sintética reproducible y dataset QR con severidades
@@ -158,7 +179,7 @@ La **web app** (`app/`) expone el pipeline clásico como API REST (`/api/restore
 - [x] Comparación SOTA (Real-ESRGAN) y validación real (v16): 1er upload de WhatsApp medido
 - [x] Validación real completa en Colab: clásico recupera el QR exacto; modelo+RS y Real-ESRGAN no (gap real medido, ver `docs/`)
 - [x] Mini-pipeline interactivo (v17) con verificación funcional y métricas por método
-- [ ] Demo web (antes/después con verificación funcional) + API REST
+- [x] Web app: antes/después con verificación funcional + API REST (`/api/restore`)
 
 ## Licencia
 
