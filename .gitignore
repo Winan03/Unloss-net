@@ -16,6 +16,7 @@ models/*
 data/
 logs/
 notebooks/
+dataset_real_qr/
 
 # Sistema
 .DS_Store
