@@ -15,6 +15,11 @@ import numpy as np
 
 _DECO = cv2.QRCodeDetector()
 
+# Los upscale x4 generan imágenes enormes; cv2 los decodifica igualmente a un tamaño
+# acotado (medido: > 3072 px no mejora la lectura y cuesta ~5x más).
+DECODE_MAX = 3072
+SSIM_MAX = 600  # SSIM se calcula sobre vista reducida: es métrica secundaria, no predice utilidad
+
 
 # ---------- transformaciones básicas ----------
 
@@ -55,8 +60,8 @@ def invert(img: np.ndarray) -> np.ndarray:
 
 # ---------- decodificación ----------
 
-def decode(img: np.ndarray) -> str | None:
-    """Decodifica un QR. Devuelve el payload o None. cv2 primero; pyzbar si existe."""
+def _single(img: np.ndarray) -> str | None:
+    """Decodifica con cv2 y, si existe, pyzbar. Devuelve el payload o None."""
     try:
         d, _, _ = _DECO.detectAndDecode(img)
         if d:
@@ -70,6 +75,22 @@ def decode(img: np.ndarray) -> str | None:
                 return r.data.decode("utf-8", "replace")
     except Exception:
         pass
+    return None
+
+
+def decode(img: np.ndarray) -> str | None:
+    """Decodifica con vía rápida (vista acotada) y reintento a resolución completa.
+
+    El upscale x4 genera imágenes enormes; la mayoría de los casos se leen en la vista
+    acotada (DECODE_MAX) y terminan en milisegundos. Si no, se reintenta a resolución
+    completa (necesario en QRs desenfocados donde el detalle importa, docs §6.9).
+    """
+    view = fit_max(img, DECODE_MAX) if max(img.shape[:2]) > DECODE_MAX else img
+    payload = _single(view)
+    if payload:
+        return payload
+    if view is not img:
+        return _single(img)
     return None
 
 
@@ -93,7 +114,11 @@ def build_routes(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
 
 
 def run(img: np.ndarray) -> list[dict]:
-    """Ejecuta todos los métodos sobre la imagen y devuelve resultados por método."""
+    """Ejecuta los métodos en orden y se detiene en el primero que decodifica.
+
+    Acota la latencia: una vez hay payload verificado, los métodos restantes no aportan
+    (el resultado funcional manda, docs §6.4). Los no ejecutados no aparecen en la tabla.
+    """
     results = []
     for name, proc in build_routes(img):
         t0 = time.perf_counter()
@@ -104,6 +129,8 @@ def run(img: np.ndarray) -> list[dict]:
             "payload": payload,
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
         })
+        if payload:
+            break
     return results
 
 
@@ -166,8 +193,14 @@ def ssim(a: np.ndarray, b: np.ndarray, win: int = 7, sigma: float = 1.5) -> floa
 
 
 def metrics(subida: np.ndarray, rec: np.ndarray) -> dict:
-    """PSNR/SSIM subida vs reconstrucción (rec re-escalada al tamaño de la subida)."""
+    """PSNR/SSIM subida vs reconstrucción. SSIM se calcula sobre vista reducida (SSIM_MAX):
+    es una métrica secundaria y no predice el éxito funcional (docs §6.4)."""
     rs = cv2.resize(rec, (subida.shape[1], subida.shape[0]), interpolation=cv2.INTER_CUBIC)
+    if max(subida.shape[:2]) > SSIM_MAX:
+        s = SSIM_MAX / max(subida.shape[:2])
+        rs = cv2.resize(rs, (int(rs.shape[1] * s), int(rs.shape[0] * s)), interpolation=cv2.INTER_AREA)
+        subida = cv2.resize(subida, (int(subida.shape[1] * s), int(subida.shape[0] * s)),
+                            interpolation=cv2.INTER_AREA)
     return {
         "subida_vs_rec_psnr": round(psnr(subida, rs), 2),
         "subida_vs_rec_ssim": round(ssim(subida, rs), 4),

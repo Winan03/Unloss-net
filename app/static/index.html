@@ -2,10 +2,103 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Unloss</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unloss — restauración funcional de QR</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>Unloss</h1>
-  <p>API REST del pipeline en construcción. UI completa en el siguiente incremento.</p>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="finder" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div>
+        <h1>Unloss</h1>
+        <p class="tagline">Restauración funcional y verificación de QR/texto degradados por apps de mensajería.</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="input-panel">
+      <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Subir una imagen">
+        <input type="file" id="fileInput" accept="image/*" hidden>
+        <p class="dz-main">Arrastra una imagen aquí o haz clic para elegir</p>
+        <p class="hint">JPEG/PNG · máx 10 MB · QR o captura de texto</p>
+        <p id="fileName" class="file-name"></p>
+      </div>
+
+      <div class="fields">
+        <label for="expected">Contenido esperado (opcional)</label>
+        <input type="text" id="expected" spellcheck="false"
+               placeholder="https://ejemplo.com o el texto que debería contener">
+      </div>
+
+      <label class="check" for="useModel">
+        <input type="checkbox" id="useModel"> Probar ruta <em>experimental</em> del modelo v9b
+        <span class="hint">(solo si esta instancia tiene el checkpoint; en Render está desactivada)</span>
+      </label>
+
+      <button id="runBtn" class="run-btn">Restaurar y verificar</button>
+      <p id="errorLine" class="error" hidden></p>
+    </section>
+
+    <section id="result" class="result" hidden>
+      <div id="statusBanner" class="banner" role="status" aria-live="polite"></div>
+
+      <div class="compare-wrap">
+        <div id="compare" class="compare">
+          <span class="img-label left">Subida</span>
+          <span class="img-label right">Restaurada</span>
+          <div id="canvas" class="canvas">
+            <img id="imgRec" class="layer rec" alt="Reconstrucción del pipeline">
+            <img id="imgUp" class="layer up" alt="Imagen subida">
+            <div id="divider" class="divider" role="slider" aria-label="Comparación"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
+            <div id="scanline" class="scanline" aria-hidden="true"></div>
+          </div>
+          <div id="lens" class="lens" hidden>
+            <div class="lens-half lens-up" id="lensUp"></div>
+            <div class="lens-divider"></div>
+            <div class="lens-half lens-rec" id="lensRec"></div>
+          </div>
+        </div>
+        <div id="overlayTag" class="overlay-tag" hidden></div>
+      </div>
+
+      <div id="payloadChip" class="payload" hidden>
+        <span id="payloadSym" class="sym"></span>
+        <code id="payloadText"></code>
+        <button id="copyBtn" class="copy-btn" type="button">Copiar</button>
+      </div>
+
+      <details class="details">
+        <summary>Detalle por método y métricas</summary>
+        <table id="methodsTable" class="methods"></table>
+        <p id="metricsLine" class="metrics"></p>
+        <p id="modelLine" class="metrics"></p>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Herramienta de código abierto. Resultado automático: <strong>ningún humano revisa tus imágenes</strong> y puede
+       equivocarse; revisa el contenido antes de usarlo.</p>
+    <p><a href="https://github.com/Winan03/Unloss-net">Repositorio</a> · memoria técnica en <code>docs/</code></p>
+  </footer>
+
+  <div id="modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden>
+    <div class="modal">
+      <h2 id="modalTitle">Qué es esto y cómo se procesa tu imagen</h2>
+      <ul>
+        <li><strong>Qué es:</strong> herramienta de restauración y verificación de QR de código abierto (Apache-2.0); no un servicio comercial.</li>
+        <li><strong>Cómo procesa:</strong> el resultado es <em>automático</em> (visión por computadora + verificación). <strong>Ningún humano revisa tus imágenes.</strong></li>
+        <li><strong>Puede equivocarse:</strong> decodificación parcial o falsos positivos; revisa el resultado antes de usar el contenido.</li>
+        <li><strong>Privacidad:</strong> las imágenes se procesan en memoria y <strong>no se guardan</strong>. No subas QR de pagos, documentos o datos personales: el pipeline los decodificaría y los mostraría en la respuesta.</li>
+      </ul>
+      <button id="modalOk" class="run-btn" type="button">Entendido</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>
