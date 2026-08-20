@@ -31,59 +31,61 @@ _net = None
 
 # ---------- arquitectura V9Net (igual que notebooks/17) ----------
 
-class ConvBN(nn.Module):
-    def __init__(self, cin, cout, k=3, s=1, p=1):
-        super().__init__()
-        self.c = nn.Conv2d(cin, cout, k, s, p)
-        self.bn = nn.BatchNorm2d(cout)
+if TORCH_OK:  # pragma: no cover (sin torch en Render free nunca llega aquí)
 
-    def forward(self, x):
-        return F.relu(self.bn(self.c(x)))
+    class ConvBN(nn.Module):
+        def __init__(self, cin, cout, k=3, s=1, p=1):
+            super().__init__()
+            self.c = nn.Conv2d(cin, cout, k, s, p)
+            self.bn = nn.BatchNorm2d(cout)
 
-
-class Down(nn.Module):
-    def __init__(self, cin, cout):
-        super().__init__()
-        self.block = nn.Sequential(ConvBN(cin, cout), ConvBN(cout, cout))
-
-    def forward(self, x):
-        x = self.block(x)
-        return F.max_pool2d(x, 2)
+        def forward(self, x):
+            return F.relu(self.bn(self.c(x)))
 
 
-class Encoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.c0 = ConvBN(3, 48)
-        self.d1 = Down(48, 96)
-        self.d2 = Down(96, 192)
-        self.d3 = Down(192, FEAT)
+    class Down(nn.Module):
+        def __init__(self, cin, cout):
+            super().__init__()
+            self.block = nn.Sequential(ConvBN(cin, cout), ConvBN(cout, cout))
 
-    def forward(self, x):
-        return self.d3(self.d2(self.d1(self.c0(x))))
+        def forward(self, x):
+            x = self.block(x)
+            return F.max_pool2d(x, 2)
 
 
-class GridHead(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.up = nn.Sequential(
-            nn.ConvTranspose2d(FEAT, 96, 2, 2), nn.BatchNorm2d(96), nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(96, 32, 2, 2), nn.BatchNorm2d(32), nn.ReLU(inplace=True),
-        )
-        self.h = nn.Conv2d(32, 1, 1)
+    class Encoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.c0 = ConvBN(3, 48)
+            self.d1 = Down(48, 96)
+            self.d2 = Down(96, 192)
+            self.d3 = Down(192, FEAT)
 
-    def forward(self, f):
-        return self.h(self.up(f))
+        def forward(self, x):
+            return self.d3(self.d2(self.d1(self.c0(x))))
 
 
-class V9Net(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.enc = Encoder()
-        self.grid = GridHead()
+    class GridHead(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.up = nn.Sequential(
+                nn.ConvTranspose2d(FEAT, 96, 2, 2), nn.BatchNorm2d(96), nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(96, 32, 2, 2), nn.BatchNorm2d(32), nn.ReLU(inplace=True),
+            )
+            self.h = nn.Conv2d(32, 1, 1)
 
-    def forward(self, x):
-        return self.grid(self.enc(x))
+        def forward(self, f):
+            return self.h(self.up(f))
+
+
+    class V9Net(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.enc = Encoder()
+            self.grid = GridHead()
+
+        def forward(self, x):
+            return self.grid(self.enc(x))
 
 
 # ---------- geometría del QR (v17) ----------
@@ -143,14 +145,16 @@ def _get_quad(img):
     return None
 
 
-def _grid_soft(net, img256, mc, cn):
-    x = torch.from_numpy(img256.transpose(2, 0, 1).astype(np.float32) / 255.0).unsqueeze(0)
-    with torch.no_grad():
-        logits = net(x.to(DEVICE))
-        g = F.grid_sample(logits, cn.view(1, 1, mc * mc, 2).to(DEVICE),
-                          mode="bilinear", align_corners=True)
-    p = torch.sigmoid(g).view(mc, mc).cpu().numpy().astype(np.float32)
-    return (p > 0.5).astype(np.uint8)
+if TORCH_OK:  # pragma: no cover (sin torch en Render free nunca llega aquí)
+
+    def _grid_soft(net, img256, mc, cn):
+        x = torch.from_numpy(img256.transpose(2, 0, 1).astype(np.float32) / 255.0).unsqueeze(0)
+        with torch.no_grad():
+            logits = net(x.to(DEVICE))
+            g = F.grid_sample(logits, cn.view(1, 1, mc * mc, 2).to(DEVICE),
+                              mode="bilinear", align_corners=True)
+        p = torch.sigmoid(g).view(mc, mc).cpu().numpy().astype(np.float32)
+        return (p > 0.5).astype(np.uint8)
 
 
 def _render_qr(grid, box=8, border=4):
