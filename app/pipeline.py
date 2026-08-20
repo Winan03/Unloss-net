@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from difflib import SequenceMatcher
 
 import cv2
 import numpy as np
+
+from app.verify import normalize_text  # misma normalización OCR que la verificación funcional
 
 _DECO = cv2.QRCodeDetector()
 
@@ -37,6 +40,17 @@ OCR_MIN_CONF = 50.0  # confianza media mínima de Tesseract para contar el texto
 RAPID_MIN_CONF = 0.7  # gate de RapidOCR: su escala de confianza no es la de Tesseract. Calibrado
                       # en medición sintética local: lecturas legítimas ~0.97, ruido en Moiré
                       # extremo ~0.58. Experimental: no medido en el set real de la memoria.
+# Selección del dominio texto (docs §6.8.2): se prueban todos los métodos y se elige la lectura
+# con mayor confianza media. Umbral de parada temprana: una lectura por encima ya es "confiada";
+# probar más métodos solo sumaría latencia sin ganancia medible (calibrado en caso real del poema:
+# la mejor lectura es Otsu x4 con conf 82.4, por debajo de estos umbrales -> se prueban todos).
+TEXT_HIGH_CONF = 90.0
+RAPID_HIGH_CONF = 0.95
+# Banda de confianza para seleccionar sin expected: entre las lecturas a <=CONF_BAND puntos de
+# la máxima, gana la más larga. La confianza sola NO predice utilidad funcional (medido en el
+# caso real del poema: upscale x4 conf 83.5 ratio 0.672 vs Otsu x4 conf 81.1 ratio 0.768);
+# la banda + longitud elige a Otsu x4 (el óptimo real).
+CONF_BAND = 3.0
 
 
 def ocr_available() -> bool:
@@ -118,14 +132,14 @@ def decode(img: np.ndarray) -> str | None:
 
 # ---------- dominio texto (Tesseract, mismo motor que la memoria §6.8.2) ----------
 
-def _ocr(img: np.ndarray) -> str | None:
+def _ocr(img) -> tuple[str | None, float]:
     """Tesseract (psm 6: bloque de texto uniforme, típico de screenshots).
 
-    Devuelve el texto leído con filtro de confianza media (evita contar ruido de una
-    imagen sin texto como si fuera lectura) o None si no hay OCR disponible.
+    Devuelve (texto, confianza media) con filtro de confianza (evita contar ruido de una
+    imagen sin texto como si fuera lectura) o (None, 0.0) si no hay OCR disponible.
     """
     if not _OCR_OK:
-        return None
+        return None, 0.0
     try:
         data = pytesseract.image_to_data(
             to_gray(img), output_type=pytesseract.Output.DICT, config="--oem 1 --psm 6")
@@ -162,19 +176,23 @@ def _ocr(img: np.ndarray) -> str | None:
             lines.append(" ".join(current_line))
             
         if not lines:
-            return None
+            return None, 0.0
             
         text = "\n".join(lines)
+        mean_conf = sum(confs) / len(confs)
         
-        if len(text) >= OCR_MIN_LEN and sum(confs) / len(confs) >= OCR_MIN_CONF:
-            return text
-        return None
+        if len(text) >= OCR_MIN_LEN and mean_conf >= OCR_MIN_CONF:
+            return text, mean_conf
+        return None, 0.0
     except Exception:
-        return None
+        return None, 0.0
 
 
-def decode_text(img: np.ndarray) -> str | None:
-    """OCR sobre vista acotada (TEXT_MAX); el upscale x4 ya aporta el detalle."""
+def decode_text_full(img: np.ndarray) -> tuple[str | None, float]:
+    """OCR sobre vista acotada (TEXT_MAX); el upscale x4 ya aporta el detalle.
+
+    Devuelve (texto, confianza media) para que el dominio texto seleccione la mejor lectura.
+    """
     view = fit_max(img, TEXT_MAX) if max(img.shape[:2]) > TEXT_MAX else img
     return _ocr(view)
 
@@ -205,15 +223,15 @@ def rapid_available() -> bool:
     return _RAPID is not None
 
 
-def _ocr_rapid(img: np.ndarray) -> str | None:
+def _ocr_rapid(img: np.ndarray) -> tuple[str | None, float]:
     if not rapid_available():
-        return None
+        return None, 0.0
     try:
         res, _ = _RAPID(img)
     except Exception:
-        return None
+        return None, 0.0
     if not res:
-        return None
+        return None, 0.0
     items = []
     for box, text, conf in res:
         text = (text or "").strip()
@@ -225,7 +243,7 @@ def _ocr_rapid(img: np.ndarray) -> str | None:
             conf = 0.0
         items.append((box, text, conf))
     if not items:
-        return None
+        return None, 0.0
     items.sort(key=lambda it: (round(min(p[1] for p in it[0]) / 12), min(p[0] for p in it[0])))
     lines: list[str] = []
     confs: list[float] = []
@@ -241,12 +259,17 @@ def _ocr_rapid(img: np.ndarray) -> str | None:
         last_y = y
         confs.append(conf)
     text = "\n".join(l for l in lines if l)
-    if len(text) >= OCR_MIN_LEN and sum(confs) / len(confs) >= RAPID_MIN_CONF:
-        return text
-    return None
+    mean_conf = sum(confs) / len(confs) if confs else 0.0
+    if len(text) >= OCR_MIN_LEN and mean_conf >= RAPID_MIN_CONF:
+        return text, mean_conf
+    return None, 0.0
 
 
-def decode_text_rapid(img: np.ndarray) -> str | None:
+def decode_text_rapid_full(img: np.ndarray) -> tuple[str | None, float]:
+    """OCR (RapidOCR) sobre vista acotada (TEXT_MAX).
+
+    Devuelve (texto, confianza media) para que el dominio texto seleccione la mejor lectura.
+    """
     view = fit_max(img, TEXT_MAX) if max(img.shape[:2]) > TEXT_MAX else img
     return _ocr_rapid(view)
 
@@ -283,7 +306,39 @@ def build_text_routes(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
     ]
 
 
-def run(img: np.ndarray, text_engine: str = "tesseract") -> list[dict]:
+def select_best_read(reads: list[tuple[float, str]]) -> int:
+    """Índice de la mejor lectura sin expected: entre las de confianza a <=CONF_BAND puntos de
+    la máxima, la más larga. -1 si vacío.
+
+    Función pura (testeable sin OCR). La confianza sola no predice utilidad funcional
+    (medido en el caso real del poema), por eso se combina con longitud dentro de la banda.
+    """
+    if not reads:
+        return -1
+    max_conf = max(c for c, _ in reads)
+    band = [i for i, (c, _) in enumerate(reads) if c >= max_conf - CONF_BAND]
+    return max(band, key=lambda i: len(reads[i][1]))
+
+
+def select_best_match(reads: list[tuple[float, str]], expected: str) -> int:
+    """Índice de la lectura con mayor similitud normalizada al contenido esperado.
+
+    Ancla funcional (no de confianza): cuando el usuario declara qué contenido verificar,
+    se elige la restauración cuyo texto más se acerca a lo esperado — misma normalización
+    que verify.classify_text. Función pura. -1 si vacío.
+    """
+    if not reads:
+        return -1
+    ne = normalize_text(expected)
+    best, best_r = 0, -1.0
+    for i, (_, text) in enumerate(reads):
+        r = SequenceMatcher(None, normalize_text(text), ne).ratio()
+        if r > best_r:
+            best, best_r = i, r
+    return best
+
+
+def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = None) -> list[dict]:
     """Ejecuta los métodos en orden y se detiene en el primero que decodifica.
 
     Acota la latencia: una vez hay payload verificado, los métodos restantes no aportan
@@ -292,6 +347,14 @@ def run(img: np.ndarray, text_engine: str = "tesseract") -> list[dict]:
     Orden de dominios: primero QR; solo si ninguna variante QR decodifica se prueban las
     de texto (OCR). Así un QR legible no paga el coste del OCR, y una imagen de texto
     no puede contaminar la ruta QR.
+
+    Dominio texto (docs §6.8.2): se prueban TODOS los métodos de texto y se elige la lectura.
+      - Con expected: la de mayor similitud normalizada al contenido esperado (ancla funcional,
+        select_best_match). No hay parada temprana: para comparar hace falta probar todo.
+      - Sin expected: banda de confianza + la más larga (select_best_read), con parada temprana
+        solo si una lectura ya supera TEXT_HIGH_CONF / RAPID_HIGH_CONF.
+    Medido en caso real (foto de poema): la selección pasa de la primera lectura (0.653) a
+    Otsu x4 (0.768, el óptimo) — la confianza sola habría elegido upscale x4 (0.672).
 
     text_engine (lector de texto, experimental):
       - "tesseract" -> clásico, el validado en la memoria §6.8.2 (defecto)
@@ -314,24 +377,49 @@ def run(img: np.ndarray, text_engine: str = "tesseract") -> list[dict]:
         if payload:
             return results
     for engine in engine_order:
+        full = decode_text_full if engine == "tesseract" else decode_text_rapid_full
+        high = TEXT_HIGH_CONF if engine == "tesseract" else RAPID_HIGH_CONF
+        ne = normalize_text(expected) if expected else None
+        reads: list[tuple[float, str]] = []
+        candidates: list[dict] = []
         for name, proc in build_text_routes(img):
             t0 = time.perf_counter()
-            payload = (decode_text if engine == "tesseract" else decode_text_rapid)(proc)
-            results.append({
+            payload, conf = full(proc)
+            res = {
                 "domain": "text",
                 "name": name,
                 "engine": engine,
                 "decoded": bool(payload),
                 "payload": payload,
+                "confidence": round(conf, 1) if payload else None,
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
-            })
+            }
+            results.append(res)
             if payload:
-                return results
+                reads.append((conf, payload))
+                candidates.append(res)
+                if ne is not None:
+                    if SequenceMatcher(None, normalize_text(payload), ne).ratio() == 1.0:
+                        res["best"] = True
+                        res["early"] = "exact"
+                        return results
+                elif conf >= high:
+                    res["best"] = True
+                    res["early"] = "conf"
+                    return results
+        if reads:
+            idx = select_best_match(reads, expected) if expected else select_best_read(reads)
+            candidates[idx]["best"] = True
+            candidates[idx]["early"] = None
+            return results
     return results
 
 
 def most_common_payload(results: list[dict]) -> str | None:
-    """Payload más frecuente entre los métodos que decodifican (lecturas distintas -> la mayoría)."""
+    """Payload del método elegido (flag 'best' en texto) o el más frecuente entre los que decodifican."""
+    for r in results:
+        if r.get("best"):
+            return r["payload"]
     vals = [r["payload"] for r in results if r["decoded"]]
     if not vals:
         return None
@@ -339,13 +427,15 @@ def most_common_payload(results: list[dict]) -> str | None:
 
 
 def best_reconstruction(img: np.ndarray, results: list[dict]) -> tuple[str, np.ndarray]:
-    """Mejor salida para mostrar: el método que decodificó; si ninguno, Otsu x4 (mejor esfuerzo)."""
+    """Mejor salida para mostrar: el método elegido ('best'); si ninguno, Otsu x4 (mejor esfuerzo)."""
+    routes = dict(build_routes(img))
+    routes.update(dict(build_text_routes(img)))
+    for r in results:
+        if r.get("best"):
+            return r["name"], routes[r["name"]]
     decoded = [r for r in results if r["decoded"]]
     if decoded:
-        name = decoded[0]["name"]
-        routes = dict(build_routes(img))
-        routes.update(dict(build_text_routes(img)))
-        return name, routes[name]
+        return decoded[0]["name"], routes[decoded[0]["name"]]
     return "Otsu x4", otsu(up(img, 4))
 
 

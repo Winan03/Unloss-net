@@ -248,7 +248,7 @@
     hud.hidden = false;
     hudPsnr.textContent = mt.subida_vs_rec_psnr != null ? Number(mt.subida_vs_rec_psnr).toFixed(2) + " dB" : "—";
     hudSsim.textContent = mt.subida_vs_rec_ssim != null ? Number(mt.subida_vs_rec_ssim).toFixed(3) : "—";
-    const via = (j.methods || []).find((m) => m.decoded);
+    const via = (j.methods || []).find((m) => m.best) || (j.methods || []).find((m) => m.decoded);
     hudVia.textContent = via ? (via.engine && via.engine !== "tesseract" ? via.name + " · " + via.engine : via.name) : "—";
     hudVia.className = "hud-val" + (via ? " ok" : "");
     const lat = (j.elapsed_ms / 1000).toFixed(2) + " s";
@@ -283,7 +283,15 @@
       const td = document.createElement("td");
       td.colSpan = 5;
       td.className = "no";
-      td.textContent = "Detenido tras el primer método que decodificó (acota latencia).";
+      if (j.selection === "high_conf") {
+        td.textContent = "Detenido al lograr una lectura con confianza alta (acota latencia).";
+      } else if (j.selection === "exact") {
+        td.textContent = "Detenido al lograr una lectura que coincide con el contenido esperado.";
+      } else if (j.selection === "best") {
+        td.textContent = "Se probaron todos los métodos; se muestra la mejor lectura.";
+      } else {
+        td.textContent = "Detenido tras el primer método que decodificó (acota latencia).";
+      }
       tr.appendChild(td);
     }
 

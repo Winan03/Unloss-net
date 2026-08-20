@@ -46,6 +46,24 @@ def test_best_reconstruction_escalada_al_tamano_de_la_subida():
     assert "subida_vs_rec_psnr" in m
 
 
+def test_select_best_read_por_banda_y_longitud():
+    # dentro de la banda (<= CONF_BAND de la máxima confianza) gana la más larga
+    reads = [(50.0, "abc"), (90.0, "def"), (90.0, "def ghi")]
+    assert pipeline.select_best_read(reads) == 2
+    # fuera de la banda no compite: la de mayor confianza gana aunque sea más corta
+    assert pipeline.select_best_read([(80.0, "corto"), (70.0, "otra lectura mas larga")]) == 0
+    # dentro de la banda, la más larga supera a la de un punto más de confianza
+    assert pipeline.select_best_read([(90.0, "aa"), (89.0, "bbbbbbbbbbbbbb")]) == 1
+    assert pipeline.select_best_read([]) == -1
+
+
+def test_select_best_match_elige_por_similitud_funcional():
+    reads = [(90.0, "el perro corre por la calle"), (80.0, "otra cosa totalmente distinta")]
+    assert pipeline.select_best_match(reads, "El perro corre por la calle") == 0
+    assert pipeline.select_best_match(reads, "Otra cosa totalmente distinta") == 1
+    assert pipeline.select_best_match([], "cualquiera") == -1
+
+
 # ---------- caso real (requiere dataset_real_qr/, no versionado) ----------
 
 def _load(name: str) -> np.ndarray:

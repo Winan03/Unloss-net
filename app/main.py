@@ -64,9 +64,21 @@ def restore(image: UploadFile = File(...),
 
     img = pipeline.fit_max(img, MAX_DIM)
 
-    results = pipeline.run(img, text_engine=engine)
-    payload = pipeline.most_common_payload(results)
     exp = expected.strip() or None
+    results = pipeline.run(img, text_engine=engine, expected=exp)
+    payload = pipeline.most_common_payload(results)
+
+    best_res = next((r for r in results if r.get("best")), None)
+    selection = None
+    if best_res:
+        if best_res.get("early") == "exact":
+            selection = "exact"
+        elif best_res.get("early") == "conf":
+            selection = "high_conf"
+        else:
+            selection = "best"
+    elif any(r["decoded"] for r in results):
+        selection = "first"
 
     text_decoded = any(r.get("domain") == "text" and r["decoded"] for r in results)
     note = None
@@ -94,6 +106,7 @@ def restore(image: UploadFile = File(...),
     return JSONResponse({
         "status": status,
         "domain": domain,
+        "selection": selection,
         "note": note,
         "methods": results,
         "decoded_payload": payload,
