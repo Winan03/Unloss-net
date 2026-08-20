@@ -46,7 +46,7 @@ def health() -> dict:
 def restore(image: UploadFile = File(...),
             expected: str = Form(""),
             use_model: str = Form("false"),
-            ocr_engine: str = Form("tesseract")) -> JSONResponse:
+            ocr_engine: str = Form("auto")) -> JSONResponse:
     t0 = time.perf_counter()
     engine = ocr_engine.strip().lower()
     if engine not in TEXT_ENGINES:

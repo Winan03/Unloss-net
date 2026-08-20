@@ -40,17 +40,22 @@ OCR_MIN_CONF = 50.0  # confianza media mínima de Tesseract para contar el texto
 RAPID_MIN_CONF = 0.7  # gate de RapidOCR: su escala de confianza no es la de Tesseract. Calibrado
                       # en medición sintética local: lecturas legítimas ~0.97, ruido en Moiré
                       # extremo ~0.58. Experimental: no medido en el set real de la memoria.
-# Selección del dominio texto (docs §6.8.2): se prueban todos los métodos y se elige la lectura
-# con mayor confianza media. Umbral de parada temprana: una lectura por encima ya es "confiada";
-# probar más métodos solo sumaría latencia sin ganancia medible (calibrado en caso real del poema:
-# la mejor lectura es Otsu x4 con conf 82.4, por debajo de estos umbrales -> se prueban todos).
+# Parada temprana del dominio texto (docs §6.8.2): se prueban los métodos y se elige la mejor
+# lectura. Tesseract puede detenerse antes si una lectura ya es "confiada" (>= TEXT_HIGH_CONF).
+# RapidOCR NO puede: su confianza es plana (da ~0.95-0.98 a lecturas buenas y malas por igual,
+# medido en el caso del poema: 0.981 para una lectura con ratio 0.18), así que ahí se prueban
+# todos los métodos y gana la selección combinada (banda de confianza + longitud).
 TEXT_HIGH_CONF = 90.0
-RAPID_HIGH_CONF = 0.95
 # Banda de confianza para seleccionar sin expected: entre las lecturas a <=CONF_BAND puntos de
 # la máxima, gana la más larga. La confianza sola NO predice utilidad funcional (medido en el
 # caso real del poema: upscale x4 conf 83.5 ratio 0.672 vs Otsu x4 conf 81.1 ratio 0.768);
 # la banda + longitud elige a Otsu x4 (el óptimo real).
 CONF_BAND = 3.0
+# Escala de la confianza de RapidOCR (0-1) a la de Tesseract (0-100) para poder compararlas
+# en la selección del lector automático (auto). La confianza de RapidOCR es plana: en `auto`
+# la banda de confianza + longitud dentro del pool combinado manda, y con expected manda la
+# similitud funcional.
+RAPID_CONF_SCALE = 100.0
 
 
 def ocr_available() -> bool:
@@ -348,18 +353,21 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
     de texto (OCR). Así un QR legible no paga el coste del OCR, y una imagen de texto
     no puede contaminar la ruta QR.
 
-    Dominio texto (docs §6.8.2): se prueban TODOS los métodos de texto y se elige la lectura.
+    Dominio texto (docs §6.8.2): se prueban TODOS los métodos de texto de cada lector y se elige
+    la lectura (por lector o combinada en `auto`):
       - Con expected: la de mayor similitud normalizada al contenido esperado (ancla funcional,
-        select_best_match). No hay parada temprana: para comparar hace falta probar todo.
+        select_best_match). No hay parada temprana salvo coincidencia exacta.
       - Sin expected: banda de confianza + la más larga (select_best_read), con parada temprana
         solo si una lectura ya supera TEXT_HIGH_CONF / RAPID_HIGH_CONF.
-    Medido en caso real (foto de poema): la selección pasa de la primera lectura (0.653) a
-    Otsu x4 (0.768, el óptimo) — la confianza sola habría elegido upscale x4 (0.672).
+      - `auto` (defecto): prueba Tesseract; si el clásico lee confiado/exacto, termina ahí (rápido).
+        Si no convence, prueba también RapidOCR y selecciona la mejor lectura de AMBOS (combinada,
+        confianza normalizada con RAPID_CONF_SCALE). Medido en caso real (poema): el clásico Otsu x4
+        leía 0.768 y RapidOCR Otsu x4 lee 0.802 con mejor espaciado (menos palabras pegadas).
 
-    text_engine (lector de texto, experimental):
-      - "tesseract" -> clásico, el validado en la memoria §6.8.2 (defecto)
-      - "rapid"     -> RapidOCR (ONNX/CPU, Apache-2.0), experimental, no validado en el set
-      - "auto"      -> clásico primero; si no lee, RapidOCR como refuerzo
+    text_engine (lector de texto):
+      - "tesseract" -> solo clásico Tesseract (el validado en la memoria §6.8.2)
+      - "rapid"     -> solo RapidOCR (ONNX/CPU, Apache-2.0), no validado en el set de la memoria
+      - "auto"      -> clásico primero; si no convence, RapidOCR como refuerzo (defecto)
     """
     readers = {"tesseract": ("tesseract",), "rapid": ("rapid",), "auto": ("tesseract", "rapid")}
     engine_order = readers.get(text_engine, readers["tesseract"])
@@ -376,12 +384,12 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
         })
         if payload:
             return results
+    multi = len(engine_order) > 1
+    ne = normalize_text(expected) if expected else None
+    pool: list[tuple[float, str, dict]] = []  # (confianza normalizada a 0-100, texto, res)
     for engine in engine_order:
         full = decode_text_full if engine == "tesseract" else decode_text_rapid_full
-        high = TEXT_HIGH_CONF if engine == "tesseract" else RAPID_HIGH_CONF
-        ne = normalize_text(expected) if expected else None
-        reads: list[tuple[float, str]] = []
-        candidates: list[dict] = []
+        scale = RAPID_CONF_SCALE if engine == "rapid" else 1.0
         for name, proc in build_text_routes(img):
             t0 = time.perf_counter()
             payload, conf = full(proc)
@@ -391,27 +399,34 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
                 "engine": engine,
                 "decoded": bool(payload),
                 "payload": payload,
-                "confidence": round(conf, 1) if payload else None,
+                "confidence": round(conf * scale, 1) if payload else None,
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
             }
             results.append(res)
             if payload:
-                reads.append((conf, payload))
-                candidates.append(res)
+                pool.append((conf * scale, payload, res))
                 if ne is not None:
                     if SequenceMatcher(None, normalize_text(payload), ne).ratio() == 1.0:
                         res["best"] = True
                         res["early"] = "exact"
                         return results
-                elif conf >= high:
+                elif engine == "tesseract" and conf >= TEXT_HIGH_CONF:
+                    # Solo Tesseract puede parar por confianza: su confianza sí distingue
+                    # lecturas limpias. RapidOCR es plano (medido) y no es discriminante.
                     res["best"] = True
                     res["early"] = "conf"
                     return results
-        if reads:
-            idx = select_best_match(reads, expected) if expected else select_best_read(reads)
-            candidates[idx]["best"] = True
-            candidates[idx]["early"] = None
+        if not multi and pool:
+            local = [(c, t) for c, t, _ in pool]
+            idx = select_best_match(local, expected) if expected else select_best_read(local)
+            pool[idx][2]["best"] = True
+            pool[idx][2]["early"] = None
             return results
+    if pool:
+        pooled = [(c, t) for c, t, _ in pool]
+        idx = select_best_match(pooled, expected) if expected else select_best_read(pooled)
+        pool[idx][2]["best"] = True
+        pool[idx][2]["early"] = None
     return results
 
 

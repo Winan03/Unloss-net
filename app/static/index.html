@@ -61,11 +61,11 @@
                      placeholder="https://… o el contenido que esperas del QR (opcional)">
             </div>
             <div>
-              <label for="ocrEngine">3 · Lector de texto (experimental)</label>
+              <label for="ocrEngine">3 · Lector de texto</label>
               <select id="ocrEngine">
-                <option value="tesseract" selected>Clásico · Tesseract (validado en memoria)</option>
-                <option value="rapid">Modelo · RapidOCR (experimental, ONNX/CPU)</option>
-                <option value="auto">Automático · clásico y luego modelo</option>
+                <option value="auto" selected>Automático · Tesseract + RapidOCR (recomendado)</option>
+                <option value="tesseract">Solo clásico · Tesseract</option>
+                <option value="rapid">Solo modelo · RapidOCR (ONNX/CPU)</option>
               </select>
             </div>
             <label class="model-toggle" for="useModel">
