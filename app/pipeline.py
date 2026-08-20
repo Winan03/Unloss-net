@@ -12,6 +12,7 @@ Dos dominios (docs §6.8.2):
 
 from __future__ import annotations
 
+import os
 import time
 from collections import Counter
 from difflib import SequenceMatcher
@@ -23,8 +24,29 @@ from app.verify import normalize_text  # misma normalización OCR que la verific
 
 _DECO = cv2.QRCodeDetector()
 
+
+def _vendored_tesseract() -> tuple[str | None, str | None]:
+    """Localiza un Tesseract empaquetado en vendor/ (solo despliegue en Render free).
+
+    Render free bloquea apt-get (root en solo lectura tanto en build como en runtime), así que
+    el buildCommand descarga un binario estático de Tesseract en vendor/bin y su idioma en
+    vendor/tessdata. Aquí se lo señalamos a pytesseract si existe; si no, se usa el Tesseract
+    del sistema (desarrollo local / Colab).
+    """
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vendor")
+    cmd = os.path.join(base, "bin", "tesseract")
+    if os.path.isfile(cmd):
+        return cmd, os.path.join(base, "tessdata")
+    return None, None
+
+
 try:
     import pytesseract
+    _cmd, _tessdata = _vendored_tesseract()
+    if _cmd:
+        pytesseract.pytesseract.tesseract_cmd = _cmd
+        if os.path.isdir(_tessdata):
+            os.environ.setdefault("TESSDATA_PREFIX", _tessdata)
     pytesseract.get_tesseract_version()
     _OCR_OK = True
 except Exception:

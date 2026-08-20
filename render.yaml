@@ -3,10 +3,11 @@ services:
     name: unloss
     runtime: python
     plan: free
-    # El sandbox de build de Render free tiene el root en solo lectura (apt-get falla en build).
-    # Tesseract se instala en runtime (startCommand), donde el disco efímero sí es escribible.
-    buildCommand: pip install -r requirements.txt
-    startCommand: apt-get update && apt-get install -y --no-install-recommends tesseract-ocr && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Render free bloquea apt-get (root en solo lectura en build y en runtime). Tesseract se
+    # empaqueta como binario estático (DanielMYT/tesseract-static, Apache-2.0) + eng.traineddata
+    # (tessdata_fast) dentro del directorio del repo; pipeline.py lo detecta en vendor/.
+    buildCommand: mkdir -p vendor/bin vendor/tessdata && curl -fsSL -o vendor/bin/tesseract https://github.com/DanielMYT/tesseract-static/releases/download/tesseract-5.5.3/tesseract.x86_64 && chmod +x vendor/bin/tesseract && curl -fsSL -o vendor/tessdata/eng.traineddata https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION

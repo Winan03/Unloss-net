@@ -21,6 +21,9 @@ dataset_real_qr/
 # Archivos acumulados del desarrollo (scratch, imágenes de prueba, scripts ad-hoc)
 legacy/
 
+# Tesseract empaquetado para Render (se descarga en buildCommand, no se versiona)
+vendor/
+
 # Sistema
 .DS_Store
 Thumbs.db
