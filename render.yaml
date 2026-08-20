@@ -3,8 +3,10 @@ services:
     name: unloss
     runtime: python
     plan: free
-    buildCommand: apt-get update && apt-get install -y --no-install-recommends tesseract-ocr && pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # El sandbox de build de Render free tiene el root en solo lectura (apt-get falla en build).
+    # Tesseract se instala en runtime (startCommand), donde el disco efímero sí es escribible.
+    buildCommand: pip install -r requirements.txt
+    startCommand: apt-get update && apt-get install -y --no-install-recommends tesseract-ocr && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
