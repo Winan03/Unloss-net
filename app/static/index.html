@@ -1,83 +1,158 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Unloss — restauración funcional de QR</title>
+  <script>
+    /* Aplica tema, tamaño de texto y reducción de animaciones ANTES del primer paint (evita destello). */
+    (function () {
+      try {
+        var t = localStorage.getItem("unloss_theme"); /* system | light | dark */
+        var eff = t === "light" ? "light" : t === "dark" ? "dark"
+          : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", eff);
+        var s = localStorage.getItem("unloss_textsize"); /* | lg | xl */
+        if (s === "lg" || s === "xl") document.documentElement.setAttribute("data-size", s);
+        if (localStorage.getItem("unloss_motion") === "reduce") document.documentElement.setAttribute("data-motion", "reduce");
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <a class="skip-link" href="#result">Saltar al contenido</a>
 
   <header class="topbar">
-    <div class="brand">
-      <span class="finder" aria-hidden="true"><i></i><i></i><i></i></span>
-      <div>
-        <h1>Unloss</h1>
-        <p class="tagline">Restauración funcional y verificación de QR/texto degradados por apps de mensajería.</p>
+    <div class="topbar-inner">
+      <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand">
+        <h1>UNLOSS</h1>
+        <p class="tagline">Recupera y verifica códigos QR y texto degradados por apps de mensajería.</p>
+      </div>
+      <div class="topbar-actions">
+        <!-- Moved a11y button to the bottom -->
       </div>
     </div>
   </header>
 
-  <main>
-    <section class="input-panel">
-      <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Subir una imagen">
-        <input type="file" id="fileInput" accept="image/*" hidden>
-        <p class="dz-main">Arrastra una imagen aquí o haz clic para elegir</p>
-        <p class="hint">JPEG/PNG · máx 10 MB · QR o captura de texto</p>
-        <p id="fileName" class="file-name"></p>
-      </div>
+  <main class="container">
+    <div class="layout">
 
-      <div class="fields">
-        <label for="expected">Contenido esperado (opcional)</label>
-        <input type="text" id="expected" spellcheck="false"
-               placeholder="https://ejemplo.com o el texto que debería contener">
-      </div>
-
-      <label class="check" for="useModel">
-        <input type="checkbox" id="useModel"> Probar ruta <em>experimental</em> del modelo v9b
-        <span class="hint">(solo si esta instancia tiene el checkpoint; en Render está desactivada)</span>
-      </label>
-
-      <button id="runBtn" class="run-btn">Restaurar y verificar</button>
-      <p id="errorLine" class="error" hidden></p>
-    </section>
-
-    <section id="result" class="result" hidden>
-      <div id="statusBanner" class="banner" role="status" aria-live="polite"></div>
-
-      <div class="compare-wrap">
-        <div id="compare" class="compare">
-          <span class="img-label left">Subida</span>
-          <span class="img-label right">Restaurada</span>
-          <div id="canvas" class="canvas">
-            <img id="imgRec" class="layer rec" alt="Reconstrucción del pipeline">
-            <img id="imgUp" class="layer up" alt="Imagen subida">
-            <div id="divider" class="divider" role="slider" aria-label="Comparación"
-                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
-            <div id="scanline" class="scanline" aria-hidden="true"></div>
+      <section class="control" aria-label="Entrada">
+        <div class="card">
+          <p class="sect-label">1 · Imagen a restaurar</p>
+          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Subir una imagen">
+            <input type="file" id="fileInput" accept="image/*" hidden>
+            <img id="dzPreview" class="dz-preview" hidden alt="Vista previa de imagen seleccionada">
+            <div class="dz-frame" aria-hidden="true"><span></span></div>
+            <p class="dz-main">Arrastra una imagen o haz clic para elegir</p>
+            <p class="dz-sub">JPEG/PNG · máx 10 MB</p>
+            <p id="fileName" class="file-name" hidden></p>
           </div>
-          <div id="lens" class="lens" hidden>
-            <div class="lens-half lens-up" id="lensUp"></div>
-            <div class="lens-divider"></div>
-            <div class="lens-half lens-rec" id="lensRec"></div>
+
+          <div class="opts">
+            <div>
+              <label for="expected">2 · Contenido esperado</label>
+              <input type="text" id="expected" spellcheck="false"
+                     placeholder="https://… o el contenido que esperas del QR (opcional)">
+            </div>
+            <div>
+              <label for="ocrEngine">3 · Lector de texto (experimental)</label>
+              <select id="ocrEngine">
+                <option value="tesseract" selected>Clásico · Tesseract (validado en memoria)</option>
+                <option value="rapid">Modelo · RapidOCR (experimental, ONNX/CPU)</option>
+                <option value="auto">Automático · clásico y luego modelo</option>
+              </select>
+            </div>
+            <label class="model-toggle" for="useModel">
+              <input type="checkbox" id="useModel">
+              <span>Probar ruta <em>experimental</em> del modelo v9b
+                <br>(solo si esta instancia tiene el checkpoint; en Render está desactivada)</span>
+            </label>
+          </div>
+
+          <button id="runBtn" class="run-btn">
+            <span class="label">Restaurar y verificar</span>
+          </button>
+          <p id="errorLine" class="error-line" hidden></p>
+        </div>
+      </section>
+
+      <section id="result" class="result" aria-label="Resultado">
+
+        <div id="verdict" class="verdict" role="status" aria-live="polite" hidden>
+          <span id="verdictIcon" class="verdict-icon" aria-hidden="true"></span>
+          <div>
+            <p id="verdictTitle" class="verdict-title"></p>
+            <p id="verdictSub" class="verdict-sub"></p>
           </div>
         </div>
-        <div id="overlayTag" class="overlay-tag" hidden></div>
-      </div>
 
-      <div id="payloadChip" class="payload" hidden>
-        <span id="payloadSym" class="sym"></span>
-        <code id="payloadText"></code>
-        <button id="copyBtn" class="copy-btn" type="button">Copiar</button>
-      </div>
+        <div id="payloadChip" class="payload" hidden>
+          <span id="payloadSym" class="sym"></span>
+          <code id="payloadText"></code>
+          <button id="copyBtn" class="copy-btn" type="button">Copiar</button>
+        </div>
 
-      <details class="details">
-        <summary>Detalle por método y métricas</summary>
-        <table id="methodsTable" class="methods"></table>
-        <p id="metricsLine" class="metrics"></p>
-        <p id="modelLine" class="metrics"></p>
-      </details>
-    </section>
+        <div id="viewer" class="viewer" data-state="empty">
+          <div class="brackets" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+          <div id="emptyState" class="viewer-empty">
+            <div class="dz-frame" aria-hidden="true"><span></span></div>
+            <p>Sube una imagen y pulsa <strong>Restaurar y verificar</strong>.<br>El resultado aparecerá aquí.</p>
+            <small>ANTES / DESPUÉS — INSPECCIÓN 1:1</small>
+          </div>
+
+          <div id="loadingOverlay" class="viewer-overlay loading" hidden>
+            <div class="ov-txt">RESTAURANDO Y VERIFICANDO…</div>
+          </div>
+          <div id="errorOverlay" class="viewer-overlay error" hidden>
+            <div class="ov-txt" id="errorOverlayTxt"></div>
+          </div>
+
+          <div id="compare" class="compare" hidden>
+            <div id="canvas" class="canvas">
+              <img id="imgRec" class="layer rec" alt="Reconstrucción del pipeline">
+              <img id="imgUp" class="layer up" alt="Imagen subida">
+              <div id="scanline" class="scanline" aria-hidden="true"></div>
+              <div id="divider" class="divider" role="slider" aria-label="Comparación antes y después"
+                   aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
+              <span class="img-label left">Subida</span>
+              <span class="img-label right rec" id="imgLabelRec">Restaurada</span>
+            </div>
+            <div id="lens" class="lens" hidden>
+              <div class="lens-tag">1:1</div>
+              <div class="lens-half lens-up" id="lensUp"></div>
+              <div class="lens-divider"></div>
+              <div class="lens-half lens-rec" id="lensRec"></div>
+            </div>
+            <div id="viewerTag" class="viewer-tag" hidden></div>
+          </div>
+          <p id="viewerCaption" class="viewer-caption" hidden>Arrastra para comparar · pasa el cursor para inspeccionar 1:1</p>
+        </div>
+
+        <div id="hud" class="hud" hidden>
+          <div class="hud-chip"><span class="hud-label">PSNR</span><span id="hudPsnr" class="hud-val">—</span></div>
+          <div class="hud-chip"><span class="hud-label">SSIM</span><span id="hudSsim" class="hud-val">—</span></div>
+          <div class="hud-chip"><span class="hud-label">Vía que decodificó</span><span id="hudVia" class="hud-val">—</span></div>
+          <div class="hud-chip"><span class="hud-label">Latencia</span><span id="hudLat" class="hud-val">—</span></div>
+        </div>
+
+        <details class="details">
+          <summary>DETALLE POR MÉTODO Y MÉTRICAS</summary>
+          <div class="details-body">
+            <table id="methodsTable" class="methods"></table>
+            <p id="metricsLine" class="metrics"></p>
+            <p id="modelLine" class="metrics"></p>
+          </div>
+        </details>
+      </section>
+
+    </div>
   </main>
 
   <footer class="footer">
@@ -96,6 +171,37 @@
         <li><strong>Privacidad:</strong> las imágenes se procesan en memoria y <strong>no se guardan</strong>. No subas QR de pagos, documentos o datos personales: el pipeline los decodificaría y los mostraría en la respuesta.</li>
       </ul>
       <button id="modalOk" class="run-btn" type="button">Entendido</button>
+    </div>
+  </div>
+
+  <div class="a11y-float">
+    <div class="a11y">
+      <button id="a11yBtn" class="float-btn" type="button" aria-haspopup="dialog" aria-expanded="false" title="Accesibilidad">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="4" r="2"></circle><path d="M12 7v7"></path><path d="M7 10h10"></path><path d="m12 14-4 7"></path><path d="m12 14 4 7"></path></svg>
+        <span class="sr-only" style="position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); border:0; padding:0;">Accesibilidad</span>
+      </button>
+      <div id="a11yPanel" class="a11y-panel" role="dialog" aria-label="Preferencias de accesibilidad" hidden>
+        <div>
+          <p class="sect-label">Tema</p>
+          <div class="seg" id="segTheme" role="radiogroup" aria-label="Tema">
+            <button type="button" class="seg-btn" data-theme-pref="system" role="radio" aria-checked="true">Auto</button>
+            <button type="button" class="seg-btn" data-theme-pref="dark" role="radio" aria-checked="false">Oscuro</button>
+            <button type="button" class="seg-btn" data-theme-pref="light" role="radio" aria-checked="false">Claro</button>
+          </div>
+        </div>
+        <div>
+          <p class="sect-label">Tamaño de letra</p>
+          <div class="seg" id="segSize" role="radiogroup" aria-label="Tamaño de letra">
+            <button type="button" class="seg-btn" data-size-val="" role="radio" aria-checked="true">Normal</button>
+            <button type="button" class="seg-btn" data-size-val="lg" role="radio" aria-checked="false">Grande</button>
+            <button type="button" class="seg-btn" data-size-val="xl" role="radio" aria-checked="false">Muy grande</button>
+          </div>
+        </div>
+        <label class="a11y-toggle" for="reduceMotion">
+          <input type="checkbox" id="reduceMotion">
+          Reducir animaciones
+        </label>
+      </div>
     </div>
   </div>
 

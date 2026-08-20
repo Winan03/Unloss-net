@@ -18,6 +18,9 @@ logs/
 notebooks/
 dataset_real_qr/
 
+# Archivos acumulados del desarrollo (scratch, imágenes de prueba, scripts ad-hoc)
+legacy/
+
 # Sistema
 .DS_Store
 Thumbs.db

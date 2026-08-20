@@ -23,6 +23,7 @@ from app.model_route import attempt as model_attempt
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_DIM = 2000                        # acota el coste de cómputo
 REC_DATA_URL_MAX_DIM = 1600           # tope de la reconstrucción en la respuesta
+TEXT_ENGINES = {"tesseract", "rapid", "auto"}
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -44,8 +45,12 @@ def health() -> dict:
 @app.post("/api/restore")
 def restore(image: UploadFile = File(...),
             expected: str = Form(""),
-            use_model: str = Form("false")) -> JSONResponse:
+            use_model: str = Form("false"),
+            ocr_engine: str = Form("tesseract")) -> JSONResponse:
     t0 = time.perf_counter()
+    engine = ocr_engine.strip().lower()
+    if engine not in TEXT_ENGINES:
+        raise HTTPException(400, detail="ocr_engine debe ser tesseract, rapid o auto")
     raw = image.file.read()
     if not raw:
         raise HTTPException(400, detail="imagen vacía")
@@ -59,10 +64,18 @@ def restore(image: UploadFile = File(...),
 
     img = pipeline.fit_max(img, MAX_DIM)
 
-    results = pipeline.run(img)
+    results = pipeline.run(img, text_engine=engine)
     payload = pipeline.most_common_payload(results)
     exp = expected.strip() or None
-    status, matches = verify.classify(payload, exp)
+
+    text_decoded = any(r.get("domain") == "text" and r["decoded"] for r in results)
+    note = None
+    if text_decoded:
+        domain = "text"
+        status, matches, note = verify.classify_text(payload, exp)
+    else:
+        domain = "qr"
+        status, matches = verify.classify(payload, exp)
 
     rec_name, rec = pipeline.best_reconstruction(img, results)
     rec_small = pipeline.fit_max(rec, REC_DATA_URL_MAX_DIM)
@@ -80,6 +93,8 @@ def restore(image: UploadFile = File(...),
 
     return JSONResponse({
         "status": status,
+        "domain": domain,
+        "note": note,
         "methods": results,
         "decoded_payload": payload,
         "matches": matches,
