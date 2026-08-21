@@ -164,7 +164,14 @@
     fd.append("ocr_engine", ocrEngineEl.value);
     try {
       const r = await fetch("/api/restore", { method: "POST", body: fd });
-      const j = await r.json();
+      let j;
+      const text = await r.text();
+      try {
+        j = JSON.parse(text);
+      } catch (err) {
+        if (!r.ok) throw new Error(`Error del servidor (Código ${r.status}). Es posible que la imagen sea muy grande y el proceso se haya reiniciado por falta de memoria.`);
+        throw new Error("Respuesta inválida del servidor: " + text.slice(0, 50));
+      }
       if (!r.ok) throw new Error(j.detail || "error del servidor");
       render(j);
     } catch (err) {

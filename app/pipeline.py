@@ -16,6 +16,7 @@ import os
 import time
 from collections import Counter
 from difflib import SequenceMatcher
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -242,6 +243,14 @@ def rapid_available() -> bool:
     if _RAPID_TRIED:
         return _RAPID is not None
     _RAPID_TRIED = True
+    
+    # Prevenir OOM-kill en el plan gratuito de Render (512 MB de RAM).
+    # Los modelos ONNX de RapidOCR consumen ~250-300MB, lo cual causa que el kernel
+    # aborte el proceso (cerrando la conexión de forma abrupta y dando error JSON en el cliente).
+    if os.environ.get("RENDER") == "true":
+        _RAPID = None
+        return False
+
     try:
         from rapidocr_onnxruntime import RapidOCR
         _RAPID = RapidOCR()
@@ -303,24 +312,25 @@ def decode_text_rapid_full(img: np.ndarray) -> tuple[str | None, float]:
 
 # ---------- pipeline ----------
 
-def build_routes(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
-    """Orden de métodos probados (docs §6.9)."""
-    x4 = up(img, 4)
-    g = to_gray(img)
+def build_routes(img: np.ndarray) -> list[tuple[str, Callable[[], np.ndarray]]]:
+    """Orden de métodos probados (docs §6.9).
+    Modificado para evaluación perezosa: evita OOM en Render Free al no crear 
+    todas las variaciones en memoria simultáneamente.
+    """
     return [
-        ("Original", img),
-        ("Upscale x4 (cubic)", x4),
-        ("Escala de grises", to_bgr(g)),
-        ("Gris + contraste x1.8", to_bgr(contrast(g, 1.8))),
-        ("Afilar + contrastar", sharpen(contrast(img))),
-        ("Umbral adaptativo", to_bgr(adaptive(g))),
-        ("Otsu (original)", otsu(img)),
-        ("Otsu x4", otsu(x4)),
-        ("Invertido + contraste", invert(contrast(img))),
+        ("Original", lambda: img),
+        ("Upscale x4 (cubic)", lambda: up(img, 4)),
+        ("Escala de grises", lambda: to_bgr(to_gray(img))),
+        ("Gris + contraste x1.8", lambda: to_bgr(contrast(to_gray(img), 1.8))),
+        ("Afilar + contrastar", lambda: sharpen(contrast(img))),
+        ("Umbral adaptativo", lambda: to_bgr(adaptive(to_gray(img)))),
+        ("Otsu (original)", lambda: otsu(img)),
+        ("Otsu x4", lambda: otsu(up(img, 4))),
+        ("Invertido + contraste", lambda: invert(contrast(img))),
     ]
 
 
-def build_text_routes(img: np.ndarray, mode: str = "all") -> list[tuple[str, np.ndarray]]:
+def build_text_routes(img: np.ndarray, mode: str = "all") -> list[tuple[str, Callable[[], np.ndarray]]]:
     """Métodos del dominio texto (docs §6.8.2: Tesseract con upscale).
 
     `mode="all"` (defecto): 5 métodos, completo. Usado por `tesseract`/`rapid` y por los tests.
@@ -328,21 +338,20 @@ def build_text_routes(img: np.ndarray, mode: str = "all") -> list[tuple[str, np.
     parada temprana dispare antes. Usado por `auto` para acotar la latencia en CPU débil
     (Render free proxy ~30 s): RapidOCR tarda ~5-9 s por método, 5 métodos × 2 motores
     supera el timeout.
+    Modificado para evaluación perezosa.
     """
-    x4 = up(img, 4)
-    g = to_gray(img)
     if mode == "fast":
         return [
-            ("Texto · Otsu ×4", otsu(x4)),
-            ("Texto · upscale ×4 (cubic)", x4),
-            ("Texto · original", img),
+            ("Texto · Otsu ×4", lambda: otsu(up(img, 4))),
+            ("Texto · upscale ×4 (cubic)", lambda: up(img, 4)),
+            ("Texto · original", lambda: img),
         ]
     return [
-        ("Texto · Otsu ×4", otsu(x4)),
-        ("Texto · original", img),
-        ("Texto · upscale ×4 (cubic)", x4),
-        ("Texto · grises + contraste", to_bgr(contrast(g, 1.8))),
-        ("Texto · umbral adaptativo", to_bgr(adaptive(g))),
+        ("Texto · Otsu ×4", lambda: otsu(up(img, 4))),
+        ("Texto · original", lambda: img),
+        ("Texto · upscale ×4 (cubic)", lambda: up(img, 4)),
+        ("Texto · grises + contraste", lambda: to_bgr(contrast(to_gray(img), 1.8))),
+        ("Texto · umbral adaptativo", lambda: to_bgr(adaptive(to_gray(img)))),
     ]
 
 
@@ -407,8 +416,9 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
     readers = {"tesseract": ("tesseract",), "rapid": ("rapid",), "auto": ("tesseract", "rapid")}
     engine_order = readers.get(text_engine, readers["tesseract"])
     results = []
-    for name, proc in build_routes(img):
+    for name, proc_fn in build_routes(img):
         t0 = time.perf_counter()
+        proc = proc_fn()
         payload = decode(proc)
         results.append({
             "domain": "qr",
@@ -448,8 +458,9 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
         # Skip RapidOCR si Tesseract no leyó nada (sin expected): no hay nada que mejorar
         if engine == "rapid" and multi and ne is None and not pool:
             break
-        for name, proc in build_text_routes(img, route_mode):
+        for name, proc_fn in build_text_routes(img, route_mode):
             t0 = time.perf_counter()
+            proc = proc_fn()
             payload, conf = full(proc)
             res = {
                 "domain": "text",
@@ -510,10 +521,10 @@ def best_reconstruction(img: np.ndarray, results: list[dict]) -> tuple[str, np.n
     routes.update(dict(build_text_routes(img)))
     for r in results:
         if r.get("best"):
-            return r["name"], routes[r["name"]]
+            return r["name"], routes[r["name"]]()
     decoded = [r for r in results if r["decoded"]]
     if decoded:
-        return decoded[0]["name"], routes[decoded[0]["name"]]
+        return decoded[0]["name"], routes[decoded[0]["name"]]()
     return "Otsu x4", otsu(up(img, 4))
 
 
