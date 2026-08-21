@@ -310,15 +310,19 @@ def build_routes(img: np.ndarray) -> list[tuple[str, Callable[[], np.ndarray]]]:
     Modificado para evaluación perezosa: evita OOM en Render Free al no crear 
     todas las variaciones en memoria simultáneamente.
     """
+    # Render (512MB RAM) sufre OOM al hacer cv2.QRCodeDetector sobre imágenes de 8000px (upscale x4).
+    # Reducimos a x2 en Render para mantener la memoria a raya.
+    k = 2 if os.environ.get("RENDER") == "true" else 4
+    
     return [
         ("Original", lambda: img),
-        ("Upscale x4 (cubic)", lambda: up(img, 4)),
+        (f"Upscale x{k} (cubic)", lambda: up(img, k)),
         ("Escala de grises", lambda: to_bgr(to_gray(img))),
         ("Gris + contraste x1.8", lambda: to_bgr(contrast(to_gray(img), 1.8))),
         ("Afilar + contrastar", lambda: sharpen(contrast(img))),
         ("Umbral adaptativo", lambda: to_bgr(adaptive(to_gray(img)))),
         ("Otsu (original)", lambda: otsu(img)),
-        ("Otsu x4", lambda: otsu(up(img, 4))),
+        (f"Otsu x{k}", lambda: otsu(up(img, k))),
         ("Invertido + contraste", lambda: invert(contrast(img))),
     ]
 

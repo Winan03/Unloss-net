@@ -162,6 +162,12 @@
     if (exp) fd.append("expected", exp);
     if (useModelEl.checked) fd.append("use_model", "true");
     fd.append("ocr_engine", ocrEngineEl.value);
+    
+    // Limpiar estado UI anterior
+    payload.hidden = true;
+    hud.hidden = true;
+    verdict.hidden = true;
+    
     try {
       const r = await fetch("/api/restore", { method: "POST", body: fd });
       let j;
