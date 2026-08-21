@@ -243,13 +243,6 @@ def rapid_available() -> bool:
     if _RAPID_TRIED:
         return _RAPID is not None
     _RAPID_TRIED = True
-    
-    # Prevenir OOM-kill en el plan gratuito de Render (512 MB de RAM).
-    # Los modelos ONNX de RapidOCR consumen ~250-300MB, lo cual causa que el kernel
-    # aborte el proceso (cerrando la conexión de forma abrupta y dando error JSON en el cliente).
-    if os.environ.get("RENDER") == "true":
-        _RAPID = None
-        return False
 
     try:
         from rapidocr_onnxruntime import RapidOCR
@@ -331,15 +324,17 @@ def build_routes(img: np.ndarray) -> list[tuple[str, Callable[[], np.ndarray]]]:
 
 
 def build_text_routes(img: np.ndarray, mode: str = "all") -> list[tuple[str, Callable[[], np.ndarray]]]:
-    """Métodos del dominio texto (docs §6.8.2: Tesseract con upscale).
+    """Métodos del dominio texto (docs §6.8.2: Tesseract con upscale)."""
+    
+    # HACK PARA RENDER (512MB RAM):
+    # Si estamos en Render, cortamos todas las rutas pesadas (upscale x4, otsu) 
+    # para intentar meter el modelo de IA (RapidOCR) en memoria sin que muera.
+    if os.environ.get("RENDER") == "true":
+        return [
+            ("Texto · original", lambda: img),
+            ("Texto · grises", lambda: to_gray(img))
+        ]
 
-    `mode="all"` (defecto): 5 métodos, completo. Usado por `tesseract`/`rapid` y por los tests.
-    `mode="fast"`: 3 métodos clave reordenados (Otsu ×4 primero, el ganador medido) para que la
-    parada temprana dispare antes. Usado por `auto` para acotar la latencia en CPU débil
-    (Render free proxy ~30 s): RapidOCR tarda ~5-9 s por método, 5 métodos × 2 motores
-    supera el timeout.
-    Modificado para evaluación perezosa.
-    """
     if mode == "fast":
         return [
             ("Texto · Otsu ×4", lambda: otsu(up(img, 4))),
