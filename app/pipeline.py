@@ -320,16 +320,29 @@ def build_routes(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
     ]
 
 
-def build_text_routes(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
-    """Métodos del dominio texto (docs §6.8.2: Tesseract con upscale)."""
+def build_text_routes(img: np.ndarray, mode: str = "all") -> list[tuple[str, np.ndarray]]:
+    """Métodos del dominio texto (docs §6.8.2: Tesseract con upscale).
+
+    `mode="all"` (defecto): 5 métodos, completo. Usado por `tesseract`/`rapid` y por los tests.
+    `mode="fast"`: 3 métodos clave reordenados (Otsu ×4 primero, el ganador medido) para que la
+    parada temprana dispare antes. Usado por `auto` para acotar la latencia en CPU débil
+    (Render free proxy ~30 s): RapidOCR tarda ~5-9 s por método, 5 métodos × 2 motores
+    supera el timeout.
+    """
     x4 = up(img, 4)
     g = to_gray(img)
+    if mode == "fast":
+        return [
+            ("Texto · Otsu ×4", otsu(x4)),
+            ("Texto · upscale ×4 (cubic)", x4),
+            ("Texto · original", img),
+        ]
     return [
+        ("Texto · Otsu ×4", otsu(x4)),
         ("Texto · original", img),
         ("Texto · upscale ×4 (cubic)", x4),
         ("Texto · grises + contraste", to_bgr(contrast(g, 1.8))),
         ("Texto · umbral adaptativo", to_bgr(adaptive(g))),
-        ("Texto · Otsu ×4", otsu(x4)),
     ]
 
 
@@ -409,10 +422,33 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
     multi = len(engine_order) > 1
     ne = normalize_text(expected) if expected else None
     pool: list[tuple[float, str, dict]] = []  # (confianza normalizada a 0-100, texto, res)
+    # Umbrales de parada temprana para texto (acotan latencia en CPU débil / Render free):
+    # - AUTO_HIGH_MATCH (con expected): si Tesseract ya lee con similitud ≥ 0.70 al esperado,
+    #   no vale gastar RapidOCR (peor caso medido: 3 métodos rapid × ~7 s ≈ 21 s, supera el
+    #   timeout del proxy de Render free ~30 s). Trade-off honesto: en Render, `auto` usa
+    #   Tesseract cuando este ya lee "decente"; la combinación completa está disponible local
+    #   cambiando a text_engine="rapid" o "auto" en una máquina más rápida.
+    # - AUTO_RAPID_HIGH_MATCH (con expected): RapidOCR puede parar por similitud ≥ 0.95
+    #   (no por confianza: la confianza de Rapid es plana, medida).
+    AUTO_HIGH_MATCH = 0.70
+    AUTO_RAPID_HIGH_MATCH = 0.95
     for engine in engine_order:
         full = decode_text_full if engine == "tesseract" else decode_text_rapid_full
         scale = RAPID_CONF_SCALE if engine == "rapid" else 1.0
-        for name, proc in build_text_routes(img):
+        # Modo "fast" para auto: solo 3 métodos clave (acota latencia del peor caso)
+        route_mode = "fast" if (multi and engine == "rapid") else "all"
+        # Skip RapidOCR si Tesseract ya dio lectura suficiente (con expected)
+        if engine == "rapid" and multi and ne is not None and pool:
+            best_tess = max(
+                (SequenceMatcher(None, normalize_text(t), ne).ratio() for _, t, _ in pool),
+                default=0.0,
+            )
+            if best_tess >= AUTO_HIGH_MATCH:
+                break
+        # Skip RapidOCR si Tesseract no leyó nada (sin expected): no hay nada que mejorar
+        if engine == "rapid" and multi and ne is None and not pool:
+            break
+        for name, proc in build_text_routes(img, route_mode):
             t0 = time.perf_counter()
             payload, conf = full(proc)
             res = {
@@ -428,9 +464,14 @@ def run(img: np.ndarray, text_engine: str = "tesseract", expected: str | None = 
             if payload:
                 pool.append((conf * scale, payload, res))
                 if ne is not None:
-                    if SequenceMatcher(None, normalize_text(payload), ne).ratio() == 1.0:
+                    r = SequenceMatcher(None, normalize_text(payload), ne).ratio()
+                    if r == 1.0:
                         res["best"] = True
                         res["early"] = "exact"
+                        return results
+                    if engine == "rapid" and r >= AUTO_RAPID_HIGH_MATCH:
+                        res["best"] = True
+                        res["early"] = "match"
                         return results
                 elif engine == "tesseract" and conf >= TEXT_HIGH_CONF:
                     # Solo Tesseract puede parar por confianza: su confianza sí distingue
