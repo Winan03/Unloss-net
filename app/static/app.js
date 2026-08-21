@@ -249,11 +249,7 @@
       payloadText.textContent = j.decoded_payload || "";
       copyBtn.hidden = false;
     } else {
-      payload.hidden = false;
-      payloadSym.className = "sym err";
-      payloadSym.textContent = "×";
-      payloadText.textContent = "No se pudo decodificar";
-      copyBtn.hidden = true;
+      payload.hidden = true;
     }
 
     // HUD (mini-stats)
@@ -321,33 +317,33 @@
   const V = {
     verified: {
       cls: "ok", icon: "✓",
-      title: { qr: "Decodificó y coincide con el contenido esperado", text: "El texto leído coincide con el contenido esperado" },
-      sub: { qr: "Verificado por el pipeline clásico", text: "Comparación con normalización OCR (LineAcc)" },
-      tagTxt: { qr: "ESCANEADO ✓", text: "TEXTO LEÍDO ✓" },
+      title: { qr: "¡Verificación de prueba exitosa!", text: "¡Verificación de prueba exitosa!" },
+      sub: { qr: "El código recuperado coincide exactamente con tu texto esperado.", text: "El texto extraído coincide exactamente con tu texto esperado." },
+      tagTxt: { qr: "VERIFICADO ✓", text: "VERIFICADO ✓" },
     },
     decoded: {
       cls: "ok", icon: "✓",
-      title: { qr: "Decodificó correctamente", text: "El OCR leyó texto en la imagen" },
-      sub: { qr: "Sin contenido esperado para comparar", text: "Sin contenido esperado para comparar" },
-      tagTxt: { qr: "DECODIFICADO", text: "TEXTO LEÍDO" },
+      title: { qr: "¡Código QR recuperado con éxito!", text: "¡Texto extraído con éxito!" },
+      sub: { qr: "Hemos logrado extraer el contenido original de la imagen.", text: "Hemos logrado extraer el contenido original de la imagen." },
+      tagTxt: { qr: "RECUPERADO", text: "LEÍDO" },
     },
     false_positive: {
       cls: "warn", icon: "!",
-      title: { qr: "Decodificó pero NO coincide con lo esperado", text: "El OCR leyó texto pero NO coincide con lo esperado" },
-      sub: { qr: "Revisa el contenido antes de usarlo", text: "Revisa el texto leído antes de usarlo" },
+      title: { qr: "Aviso de verificación", text: "Aviso de verificación" },
+      sub: { qr: "Recuperamos el código, pero el resultado es distinto al texto de prueba que ingresaste.", text: "Recuperamos el texto, pero el resultado es distinto al texto de prueba que ingresaste." },
       tagTxt: { qr: "NO COINCIDE !", text: "NO COINCIDE !" },
     },
     not_decoded: {
       cls: "err", icon: "×",
-      title: { qr: "No se pudo decodificar", text: "No se pudo leer (ni QR ni texto)" },
-      sub: { qr: "El pipeline solo decodifica códigos QR y texto (OCR). Si tu imagen es otra cosa, no hay canal de lectura.", text: "Se probaron QR y texto (Tesseract). Si tu imagen es otra cosa, no hay canal de lectura." },
-      tagTxt: { qr: "×", text: "×" },
+      title: { qr: "No pudimos recuperar la imagen", text: "No pudimos recuperar el texto" },
+      sub: { qr: "Probamos varias técnicas de restauración, pero la imagen parece estar demasiado dañada o borrosa.", text: "Probamos varias técnicas de restauración, pero la imagen parece estar demasiado dañada o borrosa." },
+      tagTxt: { qr: "FALLIDO", text: "FALLIDO" },
     },
     err: {
       cls: "err", icon: "×",
-      title: { qr: "Resultado desconocido", text: "Resultado desconocido" },
-      sub: { qr: "", text: "" },
-      tagTxt: { qr: "×", text: "×" },
+      title: { qr: "Error del servidor", text: "Error del servidor" },
+      sub: { qr: "Ocurrió un problema técnico al procesar la imagen.", text: "Ocurrió un problema técnico al procesar la imagen." },
+      tagTxt: { qr: "ERROR", text: "ERROR" },
     },
   };
 
